@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <script>
+      // Suppress harmless Vite dev HMR WebSocket disconnection warning in cloud preview iframe
+      (function() {
+        if (typeof window === 'undefined') return;
+
+        // 1. Wrap WebSocket to pretend wasClean = true on close event so Vite client never logs error
+        try {
+          const OrigWebSocket = window.WebSocket;
+          if (OrigWebSocket) {
+            window.WebSocket = function(...args) {
+              const ws = new OrigWebSocket(...args);
+              const origAddEventListener = ws.addEventListener;
+              ws.addEventListener = function(type, listener, options) {
+                if (type === 'close') {
+                  const wrappedListener = function(event) {
+                    try {
+                      const proxyEvent = new Proxy(event, {
+                        get(target, prop) {
+                          if (prop === 'wasClean') return true;
+                          return typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop];
+                        }
+                      });
+                      return listener.call(this, proxyEvent);
+                    } catch (e) {
+                      return listener.apply(this, arguments);
+                    }
+                  };
+                  return origAddEventListener.call(ws, type, wrappedListener, options);
+                }
+                return origAddEventListener.apply(ws, arguments);
+              };
+              return ws;
+            };
+            window.WebSocket.prototype = OrigWebSocket.prototype;
+            window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+            window.WebSocket.OPEN = OrigWebSocket.OPEN;
+            window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
+            window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+          }
+        } catch (e) {}
+
+        // 2. Intercept console.error and console.warn for WebSocket messages
+        const originalError = console.error;
+        console.error = function(...args) {
+          if (args.length > 0) {
+            const msg = String(args[0]?.message || args[0]?.stack || args[0] || '');
+            if (msg.includes('WebSocket closed without opened') || (msg.includes('WebSocket') && msg.includes('@vite/client'))) {
+              return;
+            }
+          }
+          originalError.apply(console, args);
+        };
+
+        const originalWarn = console.warn;
+        console.warn = function(...args) {
+          if (args.length > 0) {
+            const msg = String(args[0]?.message || args[0]?.stack || args[0] || '');
+            if (msg.includes('WebSocket')) {
+              return;
+            }
+          }
+          originalWarn.apply(console, args);
+        };
+
+        // 3. Prevent unhandledrejection and window error propagation
+        window.addEventListener('unhandledrejection', function(event) {
+          const reason = String(event.reason?.message || event.reason || '');
+          if (reason.includes('WebSocket')) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        }, true);
+
+        window.addEventListener('error', function(event) {
+          const msg = String(event.message || event.error?.message || '');
+          if (msg.includes('WebSocket')) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+          }
+        }, true);
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#022c22" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Dịch Camera" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Dịch Camera Du Lịch - AR Translator</title>
+    <meta name="description" content="Ứng dụng dịch ngôn ngữ trực tiếp qua camera sang tiếng Việt dành cho du khách đi du lịch nước ngoài." />
+    <meta property="og:title" content="Dịch Camera Du Lịch - AR Translator" />
+    <meta property="og:description" content="Ứng dụng dịch ngôn ngữ trực tiếp qua camera sang tiếng Việt dành cho du khách đi du lịch nước ngoài." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-emerald-500/30 selection:text-emerald-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

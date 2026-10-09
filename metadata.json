@@ -1,0 +1,11 @@
+{
+  "name": "Dịch Camera Du Lịch - AR Translator",
+  "description": "Ứng dụng dịch ngôn ngữ trực tiếp qua camera sang tiếng Việt dành cho du khách đi du lịch nước ngoài.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

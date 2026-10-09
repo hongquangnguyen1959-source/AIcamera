@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGradM" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#022c22" />
+      <stop offset="50%" stop-color="#064e3b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="glowGradM" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+    <linearGradient id="lensGradM" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Full bleed solid/gradient background for maskable cropping -->
+  <rect width="512" height="512" fill="url(#bgGradM)" />
+
+  <g transform="translate(51, 51) scale(0.8)">
+    <!-- Viewfinder corners -->
+    <path d="M 100 160 L 100 120 L 140 120" stroke="#34d399" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+    <path d="M 412 160 L 412 120 L 372 120" stroke="#34d399" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+    <path d="M 100 352 L 100 392 L 140 392" stroke="#34d399" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+    <path d="M 412 352 L 412 392 L 372 392" stroke="#34d399" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+
+    <!-- Camera Body Center -->
+    <rect x="140" y="160" width="232" height="192" rx="36" fill="url(#lensGradM)" stroke="url(#glowGradM)" stroke-width="8" />
+
+    <!-- Camera Top Flash Notch -->
+    <rect x="216" y="132" width="80" height="28" rx="10" fill="#34d399" opacity="0.9" />
+
+    <!-- Center Lens Ring -->
+    <circle cx="256" cy="256" r="64" fill="#022c22" stroke="url(#glowGradM)" stroke-width="8" />
+    <circle cx="256" cy="256" r="42" fill="#047857" opacity="0.4" />
+
+    <!-- Translation Symbol in Lens Center -->
+    <text x="238" y="266" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="34" fill="#ffffff" text-anchor="middle">A</text>
+    <text x="274" y="268" font-family="Arial, 'PingFang SC', sans-serif" font-weight="900" font-size="28" fill="#34d399" text-anchor="middle">文</text>
+
+    <!-- Live Pulse Dot -->
+    <circle cx="340" cy="190" r="10" fill="#ef4444" />
+  </g>
+</svg>
