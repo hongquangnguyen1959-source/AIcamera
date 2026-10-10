@@ -285,7 +285,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       canvasRef.current = document.createElement('canvas');
     }
     const canvas = canvasRef.current;
-    const maxDim = 960;
+    const maxDim = 760;
     const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
     const targetW = Math.round(video.videoWidth * scale);
     const targetH = Math.round(video.videoHeight * scale);
@@ -299,11 +299,11 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (!ctx) return null;
 
     ctx.drawImage(video, 0, 0, targetW, targetH);
-    // 0.75 JPEG ensures clear stroke recognition for Asian fonts (Chinese, Japanese, Korean)
-    return canvas.toDataURL('image/jpeg', 0.75);
+    // 0.65 JPEG: Siêu nhẹ (~35KB), truyền tức thì trong 20ms mà vẫn giữ nét chữ Hán/Anh
+    return canvas.toDataURL('image/jpeg', 0.65);
   }, [cameraReady, staticImageUrl]);
 
-  // SMOOTH LIVE TRANSLATION LOOP (Completely non-blocking, leaves video stream uninterrupted at 60fps)
+  // SMOOTH LIVE TRANSLATION LOOP (Auto-scans every 10 seconds or immediately when tapped)
   useEffect(() => {
     if (!isLiveTranslating || staticImageUrl || !cameraReady) return;
 
@@ -326,12 +326,13 @@ export const CameraView: React.FC<CameraViewProps> = ({
         }
       }
 
-      // Nhịp quét tức thì: 1200ms (1.2 giây) để nội dung dịch hiện ra liền ngay khi vừa lia camera vào chữ
-      const loopInterval = isAnalyzingRef.current ? 350 : 1200;
+      // Nhịp quét tự động định kỳ 10 giây theo yêu cầu người dùng, hoặc 1 giây nếu đang bận
+      const loopInterval = isAnalyzingRef.current ? 1000 : 10000;
       timeoutId = setTimeout(runLiveLoop, loopInterval);
     };
 
-    timeoutId = setTimeout(runLiveLoop, 100);
+    // Quét lần đầu sau 1.2s khi mở camera để camera lấy nét ổn định
+    timeoutId = setTimeout(runLiveLoop, 1200);
 
     return () => {
       isMounted = false;

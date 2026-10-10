@@ -9,6 +9,42 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'suppress-hmr-client-error',
+        transformIndexHtml: {
+          order: 'pre',
+          handler() {
+            return [
+              {
+                tag: 'script',
+                attrs: { type: 'text/javascript' },
+                injectTo: 'head-prepend',
+                children: `
+                  (function() {
+                    if (typeof window === 'undefined') return;
+                    try {
+                      if (window.CloseEvent) {
+                        Object.defineProperty(window.CloseEvent.prototype, 'wasClean', {
+                          get: function() { return true; },
+                          configurable: true,
+                        });
+                      }
+                    } catch(e) {}
+                    var origErr = console.error;
+                    console.error = function() {
+                      if (arguments.length > 0) {
+                        var msg = String((arguments[0] && (arguments[0].message || arguments[0].stack || arguments[0])) || '');
+                        if (msg.indexOf('WebSocket') !== -1) return;
+                      }
+                      return origErr.apply(console, arguments);
+                    };
+                  })();
+                `,
+              },
+            ];
+          },
+        },
+      },
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
@@ -55,7 +91,7 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': import.meta.dirname ? path.resolve(import.meta.dirname, '.') : path.resolve('.'),
+        '@': path.resolve(__dirname, '.'),
       },
     },
     server: {

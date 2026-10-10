@@ -1,7 +1,6 @@
 import React from 'react';
 import { VisionTranslationResult, DetectedItem, DetectedPrice } from '../types';
-import { Volume2, AlertTriangle, Utensils, Tag, Compass, Sparkles, Check, Copy } from 'lucide-react';
-import { speakText } from '../utils/audio';
+import { AlertTriangle, Utensils, Tag, Compass, Sparkles, Check, Copy } from 'lucide-react';
 
 interface TranslateListProps {
   result?: VisionTranslationResult;
@@ -89,13 +88,6 @@ export const TranslateList: React.FC<TranslateListProps> = ({
             <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
               Bản dịch tổng quan ({detectedLanguage})
             </span>
-            <button
-              onClick={() => speakText(summaryTranslation, 'vi-VN')}
-              className="flex items-center gap-1 text-xs text-slate-300 hover:text-white px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors"
-            >
-              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Đọc to</span>
-            </button>
           </div>
           <p className="text-xs sm:text-sm text-slate-200 leading-relaxed whitespace-pre-line">
             {summaryTranslation}
@@ -136,17 +128,6 @@ export const TranslateList: React.FC<TranslateListProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        speakText(item.translated_text, 'vi-VN');
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-emerald-400 rounded-lg hover:bg-slate-800 transition-colors"
-                      title="Đọc tiếng Việt"
-                    >
-                      <Volume2 className="w-4 h-4" />
-                    </button>
                     <button
                       type="button"
                       onClick={(e) => {

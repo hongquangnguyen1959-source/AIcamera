@@ -13,7 +13,6 @@ import {
   History,
   Sparkles,
   Globe2,
-  Volume2,
   Eye,
   EyeOff,
   AlertCircle,
@@ -36,7 +35,6 @@ import { TravelAskModal } from './components/TravelAskModal';
 import { OfflinePacksModal } from './components/OfflinePacksModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
-import { speakText } from './utils/audio';
 import { compressImageForOCR } from './utils/imageCompressor';
 import { translateOfflineSnapshot } from './utils/offlineTranslator';
 import { getDownloadedPacks, getActivePackId, setActivePackId } from './utils/languagePackStorage';
@@ -152,8 +150,8 @@ export default function App() {
       setSilentNotice('Đang quét và dịch hình ảnh...');
     } else {
       if (isAnalyzingRef.current) return;
-      // Nhịp quét nhanh tức thì: cho phép nhận diện ngay khi vừa lia camera (1.2 giây)
-      if (Date.now() - lastScanTimestamp.current < 1200) return;
+      // Nhịp quét nhanh tức thì: cho phép nhận diện tức thì (450ms)
+      if (Date.now() - lastScanTimestamp.current < 450) return;
     }
 
     lastScanTimestamp.current = Date.now();
@@ -239,15 +237,19 @@ export default function App() {
 
       const rawData: VisionTranslationResult = await response.json();
       
-      // Clean Chinese characters client-side as safeguard
-      const chineseRegex = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]/g;
+      // Safeguard: Ensure translated_text is never empty
       const data: VisionTranslationResult = {
         ...rawData,
-        summary_translation: rawData.summary_translation ? rawData.summary_translation.replace(chineseRegex, '').trim() : '',
-        items: (rawData.items || []).map(item => ({
-          ...item,
-          translated_text: item.translated_text ? item.translated_text.replace(chineseRegex, '').trim() : ''
-        })).filter(item => item.translated_text.length > 0)
+        summary_translation: rawData.summary_translation ? rawData.summary_translation.trim() : '',
+        items: (rawData.items || []).map(item => {
+          let text = (item.translated_text || '').trim();
+          // Remove leftover explanatory brackets if any
+          text = text.replace(/\s*\([^)]*(?:nghĩa|phiên âm|phát âm)[^)]*\)/gi, '').trim();
+          return {
+            ...item,
+            translated_text: text
+          };
+        }).filter(item => item.translated_text.length > 0)
       };
       
       // Update translated bounding boxes and texts directly over the live camera stream
@@ -566,14 +568,6 @@ export default function App() {
                   </h4>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => speakText(result.summary_translation, 'vi-VN')}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 flex items-center gap-1 text-xs font-medium border border-slate-700 transition-colors"
-                    title="Đọc toàn bộ bài văn"
-                  >
-                    <Volume2 className="w-4 h-4" />
-                    <span>Đọc to</span>
-                  </button>
                   <button
                     onClick={() => setShowFullArticle(false)}
                     className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"

@@ -58,7 +58,7 @@ function normalizeTextForComparison(text: string): string {
   return (text || '').toLowerCase().replace(/[\s,.;:!?_()\-–—"']/g, '');
 }
 
-// Anti-overlap, full-text layout engine
+// Layout engine that places translated text directly over corresponding original text
 function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] {
   if (!rawItems || rawItems.length === 0) return [];
 
@@ -83,76 +83,46 @@ function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] 
     });
   }
 
-  // Prioritize longer, more complete sentences and larger signboard items
-  validEntries.sort((a, b) => b.text.length - a.text.length || b.area - a.area);
-
-  const nonColliding: typeof validEntries = [];
+  // Deduplicate exact repeats
+  const filtered: typeof validEntries = [];
   for (const entry of validEntries) {
-    // 1. Text Deduplication: Avoid duplicate phrases or partial fragments of already accepted sentences
-    const isDuplicateText = nonColliding.some((accepted) => {
-      // Exact identical text match
-      if (accepted.norm === entry.norm) return true;
-      // Entry is a sub-phrase/fragment of an already accepted complete sentence
-      if (accepted.norm.includes(entry.norm) && accepted.norm.length > entry.norm.length + 3) return true;
-      return false;
-    });
-
-    if (isDuplicateText) continue;
-
-    // 2. Spatial Deduplication: Avoid overlapping boxes
-    const isColliding = nonColliding.some((accepted) =>
-      isOverlappingOrNested(accepted.box, entry.box)
+    const isDuplicate = filtered.some(
+      (accepted) =>
+        accepted.norm === entry.norm &&
+        Math.abs(accepted.box[0] - entry.box[0]) < 40 &&
+        Math.abs(accepted.box[1] - entry.box[1]) < 40
     );
-
-    if (!isColliding) {
-      nonColliding.push(entry);
+    if (!isDuplicate) {
+      filtered.push(entry);
     }
   }
 
-  // Sort strictly top-to-bottom by Y position
-  nonColliding.sort((a, b) => a.box[0] - b.box[0]);
-
-  // Layout with anti-stacking collision avoidance
+  // Position items closely matching the detected bounding box of the source words
   const placed: PositionedItem[] = [];
 
-  for (const entry of nonColliding) {
+  for (const entry of filtered) {
     const [ymin, xmin, ymax, xmax] = entry.box;
     const origTop = ymin / 10;
-    const origH = Math.max(2.4, (ymax - ymin) / 10);
-    const origW = (xmax - xmin) / 10;
-    const centerX = (xmin + xmax) / 20;
+    const origLeft = xmin / 10;
+    const origH = Math.max(2.2, (ymax - ymin) / 10);
+    const origW = Math.max(4.0, (xmax - xmin) / 10);
+    const centerX = origLeft + origW / 2;
 
-    // Desired width: expand enough so Vietnamese words don't cram into 10 lines
-    const neededW = Math.max(origW, Math.min(92, Math.max(14, entry.text.length * 1.35)));
-    const left = Math.max(2, Math.min(98 - neededW, centerX - neededW / 2));
-
-    // Calculate height needed to show 100% of the words without clipping
-    const linesNeeded = Math.ceil((entry.text.length * 0.72) / Math.max(8, neededW * 0.75));
-    const estimatedH = Math.max(origH, Math.max(2.6, linesNeeded * 2.3));
-
-    let top = origTop;
-
-    // Check collision against already placed items in overlapping horizontal range
-    for (const p of placed) {
-      const hOverlap = !(left + neededW < p.left || left > p.left + p.width);
-      if (hOverlap) {
-        if (top < p.top + p.height + 0.6) {
-          top = p.top + p.height + 0.6;
-        }
-      }
-    }
-
-    // Keep within viewport boundary
-    if (top + estimatedH > 97) {
-      top = Math.max(2, 97 - estimatedH);
-    }
+    // Expand width moderately if the original text was very short (e.g. 2-3 CJK chars)
+    // but keep it tightly anchored around centerX
+    const neededW = Math.min(
+      75,
+      Math.max(origW, Math.min(entry.text.length * 1.4, origW * 1.35 + 3))
+    );
+    const left = Math.max(0.5, Math.min(99.5 - neededW, centerX - neededW / 2));
+    const top = Math.max(0.5, Math.min(99.5 - origH, origTop));
 
     placed.push({
       item: entry.item,
       top,
       left,
       width: neededW,
-      height: estimatedH,
+      height: origH,
       text: entry.text,
     });
   }
@@ -162,15 +132,15 @@ function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] 
 
 // Calculate responsive font size so text is crisp and readable
 function getResponsiveFontSize(charCount: number, boxWidthPercent: number): string {
-  const density = charCount / Math.max(10, boxWidthPercent);
-  if (charCount <= 12) {
-    return '0.85rem';
-  } else if (charCount <= 28 && density < 0.6) {
-    return '0.78rem';
-  } else if (charCount <= 50 || density < 1.0) {
-    return '0.72rem';
+  const density = charCount / Math.max(8, boxWidthPercent);
+  if (charCount <= 8) {
+    return '0.90rem';
+  } else if (charCount <= 20 && density < 0.6) {
+    return '0.82rem';
+  } else if (charCount <= 40 || density < 1.0) {
+    return '0.74rem';
   }
-  return '0.66rem';
+  return '0.68rem';
 }
 
 export const AROverlay: React.FC<AROverlayProps> = ({
@@ -200,7 +170,7 @@ export const AROverlay: React.FC<AROverlayProps> = ({
               left: `${left}%`,
               width: `${width}%`,
               minHeight: `${height}%`,
-              transition: 'top 0.18s ease-out, left 0.18s ease-out, width 0.18s ease-out, min-height 0.18s ease-out',
+              transition: 'top 0.15s ease-out, left 0.15s ease-out',
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -215,14 +185,14 @@ export const AROverlay: React.FC<AROverlayProps> = ({
               <div
                 className={`w-full flex items-center justify-center text-center transition-all ${
                   isSelected
-                    ? 'bg-amber-400 text-slate-950 font-black shadow-xl ring-2 ring-amber-300 rounded-md px-1.5 py-0.5'
+                    ? 'bg-amber-400 text-slate-950 font-black shadow-xl ring-2 ring-amber-300 rounded px-1 py-0.5'
                     : maskCoverMode
-                    ? 'bg-slate-950/80 border border-amber-400/30 text-amber-200 rounded-md px-1.5 py-0.5'
+                    ? 'bg-slate-950/80 border border-amber-400/30 text-amber-200 rounded px-1 py-0.5'
                     : 'bg-transparent text-amber-300 px-0.5 py-0'
                 }`}
-                style={{ fontSize, lineHeight: '1.25' }}
+                style={{ fontSize, lineHeight: '1.2' }}
               >
-                {/* Chữ dịch trực tiếp không có ô đen bao quanh, viền chữ sắc nét dễ đọc */}
+                {/* Chữ dịch trực tiếp không có ô đen bao quanh, viền chữ sắc nét tương phản cao */}
                 <span
                   style={{
                     textShadow: isSelected

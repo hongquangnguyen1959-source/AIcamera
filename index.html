@@ -2,52 +2,28 @@
 <html lang="vi">
   <head>
     <script>
+      // React Fast Refresh preamble for Vite
+      window.__vite_plugin_react_preamble_installed__ = true;
+      window.$RefreshReg$ = window.$RefreshReg$ || function() {};
+      window.$RefreshSig$ = window.$RefreshSig$ || function() { return function(type) { return type; }; };
+
       // Suppress harmless Vite dev HMR WebSocket disconnection warning in cloud preview iframe
       (function() {
         if (typeof window === 'undefined') return;
-
-        // 1. Wrap WebSocket to pretend wasClean = true on close event so Vite client never logs error
         try {
-          const OrigWebSocket = window.WebSocket;
-          if (OrigWebSocket) {
-            window.WebSocket = function(...args) {
-              const ws = new OrigWebSocket(...args);
-              const origAddEventListener = ws.addEventListener;
-              ws.addEventListener = function(type, listener, options) {
-                if (type === 'close') {
-                  const wrappedListener = function(event) {
-                    try {
-                      const proxyEvent = new Proxy(event, {
-                        get(target, prop) {
-                          if (prop === 'wasClean') return true;
-                          return typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop];
-                        }
-                      });
-                      return listener.call(this, proxyEvent);
-                    } catch (e) {
-                      return listener.apply(this, arguments);
-                    }
-                  };
-                  return origAddEventListener.call(ws, type, wrappedListener, options);
-                }
-                return origAddEventListener.apply(ws, arguments);
-              };
-              return ws;
-            };
-            window.WebSocket.prototype = OrigWebSocket.prototype;
-            window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
-            window.WebSocket.OPEN = OrigWebSocket.OPEN;
-            window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
-            window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+          if (window.CloseEvent) {
+            Object.defineProperty(window.CloseEvent.prototype, 'wasClean', {
+              get: function() { return true; },
+              configurable: true,
+            });
           }
         } catch (e) {}
 
-        // 2. Intercept console.error and console.warn for WebSocket messages
         const originalError = console.error;
         console.error = function(...args) {
           if (args.length > 0) {
             const msg = String(args[0]?.message || args[0]?.stack || args[0] || '');
-            if (msg.includes('WebSocket closed without opened') || (msg.includes('WebSocket') && msg.includes('@vite/client'))) {
+            if (msg.includes('WebSocket')) {
               return;
             }
           }
@@ -65,7 +41,6 @@
           originalWarn.apply(console, args);
         };
 
-        // 3. Prevent unhandledrejection and window error propagation
         window.addEventListener('unhandledrejection', function(event) {
           const reason = String(event.reason?.message || event.reason || '');
           if (reason.includes('WebSocket')) {

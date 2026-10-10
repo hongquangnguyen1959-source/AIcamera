@@ -105,33 +105,25 @@ app.post('/api/translate-vision', async (req, res) => {
       return res.json(cached.data);
     }
 
-    // Ultra-fast OCR prompt: Nhận diện từng dòng chữ riêng lẻ, vị trí chuẩn 1:1
-    const prompt = `Bạn là hệ thống AR Camera dịch trực tiếp thời gian thực sang tiếng Việt.
-HÃY QUÉT VÀ DỊCH TẤT CẢ VĂN BẢN TRONG HÌNH ẢNH:
-1. Nhận diện các dòng chữ, tiêu đề, đoạn văn bản, biển hiệu hoặc menu có trong hình.
-2. Với mỗi dòng chữ hoặc đoạn văn bản, tạo 1 mục trong mảng 'items':
-   - "box_2d": [ymin, xmin, ymax, xmax] (tọa độ từ 0 đến 1000) ôm đúng vị trí văn bản đó trên ảnh.
-   - "translated_text": Dịch trọn vẹn, tự nhiên sang tiếng Việt, rõ nghĩa 100%, không viết tắt, không cắt bớt chữ. Tuyệt đối không xuất lại chữ Hán hay ký tự gốc.
-   - "category": 'menu' | 'sign' | 'instruction' | 'other'
-3. Nếu ảnh chụp trang báo, tài liệu hay màn hình có nhiều dòng: Dịch lần lượt từng dòng/đoạn từ trên xuống dưới.
-4. "summary_translation": Bản dịch tóm tắt toàn bộ nội dung chính đã nhận diện.
-5. "detected_language": Tên ngôn ngữ nguồn (ví dụ: Tiếng Trung, Tiếng Nhật, Tiếng Anh, v.v.).
-
-Xuất định dạng JSON chuẩn:
+    // Ultra-fast OCR prompt: Khớp chính xác tọa độ chữ và dịch tức thì sang tiếng Việt
+    const prompt = `AR OCR: Xác định tọa độ box_2d [ymin, xmin, ymax, xmax] (thang 0-1000) khớp chính xác vị trí từng dòng/cụm chữ trong ảnh (tiếng Trung, Anh, Nhật...). Dịch toàn bộ sang tiếng Việt tự nhiên, rõ nghĩa dạng JSON:
 {
   "detected_language": "Ngôn ngữ nguồn",
-  "summary_translation": "Tóm tắt ngắn gọn",
+  "summary_translation": "Bản dịch tóm tắt",
   "items": [
     {
       "box_2d": [ymin, xmin, ymax, xmax],
-      "translated_text": "Bản dịch tiếng Việt hoàn chỉnh",
+      "translated_text": "Bản dịch tiếng Việt tương ứng",
       "category": "sign"
     }
   ]
 }`;
 
-    // Multi-model sequence: gemini-3.1-flash-lite FIRST for ultra-fast latency (~1s) and active quota
+    // Multi-model sequence with instant fallback across active models
     const candidateModels = [
+      'gemini-3.5-flash-lite',
+      'gemini-3.5-flash',
+      'gemini-3.6-flash',
       'gemini-3.1-flash-lite',
       'gemini-flash-latest',
       'gemini-3.8-flash',
@@ -143,9 +135,9 @@ Xuất định dạng JSON chuẩn:
     for (const modelName of candidateModels) {
       try {
         const config: any = {
-          systemInstruction: 'Bạn là chuyên gia AR OCR trực tiếp tốc độ cao. Dịch chuẩn xác 100% toàn bộ chữ trong ảnh sang tiếng Việt đầy đủ, rõ nghĩa, không viết tắt, không cắt bớt chữ, không xuất chữ Hán.',
+          systemInstruction: 'AR OCR: Dịch chuẩn xác toàn bộ chữ trong ảnh sang tiếng Việt đầy đủ, rõ nghĩa, không viết tắt, tọa độ box_2d khớp đúng vị trí chữ gốc.',
           responseMimeType: 'application/json',
-          maxOutputTokens: 2500,
+          maxOutputTokens: 1500,
         };
 
         const generatePromise = ai.models.generateContent({
@@ -165,7 +157,7 @@ Xuất định dạng JSON chuẩn:
         });
 
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Model timeout')), 14000)
+          setTimeout(() => reject(new Error('Model timeout')), 7000)
         );
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -320,9 +312,9 @@ Xuất định dạng JSON chuẩn:
       items: normalizedItems,
     };
 
-    // Cache only for 3 seconds to avoid stale results when panning camera
+    // Cache 10 giây: Giúp hiển thị tức thì (0ms) khi camera hướng vào cùng tài liệu hoặc biển hiệu
     if (normalizedItems.length > 0) {
-      frameCache.set(cacheKey, { data: finalResult, expiresAt: now + 3000 });
+      frameCache.set(cacheKey, { data: finalResult, expiresAt: now + 10000 });
       if (frameCache.size > 60) {
         for (const [k, v] of frameCache.entries()) {
           if (v.expiresAt <= now) frameCache.delete(k);
@@ -454,27 +446,50 @@ app.post('/api/tts', async (req, res) => {
 
 // Setup Vite middleware in dev or static files in production
 async function startServer() {
+  const portNumber = Number(process.env.PORT) || 3000;
+
   if (process.env.NODE_ENV !== 'production') {
+    const http = await import('http');
+    const httpServer = http.createServer(app);
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: false,
+        hmr: {
+          server: httpServer,
+        },
       },
       appType: 'spa',
     });
     app.use(vite.middlewares);
+
+    app.use('*', async (req, res, next) => {
+      if (req.method !== 'GET') return next();
+      const url = req.originalUrl;
+      try {
+        const fs = await import('fs');
+        const indexPath = path.resolve(__dirname, 'index.html');
+        if (!fs.existsSync(indexPath)) return next();
+        let template = fs.readFileSync(indexPath, 'utf-8');
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e) {
+        next(e);
+      }
+    });
+
+    httpServer.listen(portNumber, '0.0.0.0', () => {
+      console.log(`Server running on http://0.0.0.0:${portNumber}`);
+    });
   } else {
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
+    app.listen(portNumber, '0.0.0.0', () => {
+      console.log(`Server running on http://0.0.0.0:${portNumber}`);
+    });
   }
-
-  const portNumber = Number(process.env.PORT) || 3000;
-  app.listen(portNumber, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${portNumber}`);
-  });
 }
 
 export default app;

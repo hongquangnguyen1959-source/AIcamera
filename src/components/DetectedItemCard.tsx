@@ -1,7 +1,6 @@
 import React from 'react';
 import { DetectedItem } from '../types';
-import { Volume2, Copy, Check, X, AlertTriangle, Utensils, Tag, Compass, Sparkles } from 'lucide-react';
-import { speakText } from '../utils/audio';
+import { Copy, Check, X, AlertTriangle, Utensils, Tag, Compass, Sparkles } from 'lucide-react';
 
 interface DetectedItemCardProps {
   item: DetectedItem;
@@ -68,13 +67,6 @@ export const DetectedItemCard: React.FC<DetectedItemCardProps> = ({
           <div className="text-[11px] font-bold tracking-wider text-emerald-400 uppercase flex items-center justify-between">
             <span>Dịch Tiếng Việt ({detectedLang})</span>
             <div className="flex items-center gap-1">
-              <button
-                onClick={() => speakText(item.translated_text, 'vi-VN')}
-                className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-900/40 rounded transition-colors"
-                title="Nghe phát âm tiếng Việt"
-              >
-                <Volume2 className="w-4 h-4" />
-              </button>
               <button
                 onClick={() => copyToClipboard(item.translated_text)}
                 className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-900/40 rounded transition-colors"
