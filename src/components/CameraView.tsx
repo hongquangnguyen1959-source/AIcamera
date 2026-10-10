@@ -285,7 +285,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
       canvasRef.current = document.createElement('canvas');
     }
     const canvas = canvasRef.current;
-    const maxDim = 760;
+    // 640px tối ưu hóa chuẩn thị giác: dung lượng ~25KB siêu nhẹ, AI nhận diện tức thì trong <1s
+    const maxDim = 640;
     const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
     const targetW = Math.round(video.videoWidth * scale);
     const targetH = Math.round(video.videoHeight * scale);
@@ -299,16 +300,26 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (!ctx) return null;
 
     ctx.drawImage(video, 0, 0, targetW, targetH);
-    // 0.65 JPEG: Siêu nhẹ (~35KB), truyền tức thì trong 20ms mà vẫn giữ nét chữ Hán/Anh
-    return canvas.toDataURL('image/jpeg', 0.65);
+    // 0.60 JPEG: Nhẹ ~25KB, truyền siêu tốc trong 15ms qua mạng
+    return canvas.toDataURL('image/jpeg', 0.60);
   }, [cameraReady, staticImageUrl]);
 
-  // SMOOTH LIVE TRANSLATION LOOP (Auto-scans every 10 seconds or immediately when tapped)
+  // SMART LIVE TRANSLATION LOOP (Tự động nhận diện tức thì khi hướng camera vào văn bản mới)
   useEffect(() => {
     if (!isLiveTranslating || staticImageUrl || !cameraReady) return;
 
     let isMounted = true;
     let timeoutId: any = null;
+
+    // Canvas nhỏ 16x16 để đo dịch chuyển khung hình siêu nhẹ (0.05ms CPU)
+    const motionCanvas = document.createElement('canvas');
+    motionCanvas.width = 16;
+    motionCanvas.height = 16;
+    const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
+
+    let lastThumb: Uint8ClampedArray | null = null;
+    let steadyCount = 0;
+    let hadMotion = true; // Bắt đầu quét ngay khung hình đầu tiên
 
     const runLiveLoop = async () => {
       if (!isMounted || !isLiveTranslatingRef.current) return;
@@ -318,21 +329,61 @@ export const CameraView: React.FC<CameraViewProps> = ({
         !isAnalyzingRef.current &&
         video &&
         video.videoWidth > 0 &&
-        video.videoHeight > 0
+        video.videoHeight > 0 &&
+        motionCtx
       ) {
-        const frameData = captureFrame();
-        if (frameData && onLiveFrameRef.current) {
-          onLiveFrameRef.current(frameData);
+        try {
+          motionCtx.drawImage(video, 0, 0, 16, 16);
+          const currentThumb = motionCtx.getImageData(0, 0, 16, 16).data;
+
+          if (lastThumb) {
+            let diffSum = 0;
+            // So sánh độ sai khác giữa 2 khung hình
+            for (let i = 0; i < currentThumb.length; i += 8) {
+              diffSum += Math.abs(currentThumb[i] - lastThumb[i]);
+            }
+            const avgDiff = diffSum / (currentThumb.length / 8);
+
+            if (avgDiff > 14) {
+              // Camera đang di chuyển sang vị trí mới
+              hadMotion = true;
+              steadyCount = 0;
+            } else {
+              // Camera đã dừng ổn định
+              steadyCount++;
+            }
+          } else {
+            hadMotion = true;
+            steadyCount = 1;
+          }
+
+          lastThumb = new Uint8ClampedArray(currentThumb);
+
+          // KÍCH HOẠT DỊCH TỨC THÌ:
+          // 1. Khi vừa dừng camera vào dòng chữ mới (steadyCount === 1 sau khi di chuyển)
+          // 2. Hoặc định kỳ mỗi 6 giây nếu giữ nguyên camera
+          const shouldTriggerScan =
+            (hadMotion && steadyCount === 1) ||
+            (steadyCount > 0 && steadyCount % 12 === 0);
+
+          if (shouldTriggerScan) {
+            hadMotion = false;
+            const frameData = captureFrame();
+            if (frameData && onLiveFrameRef.current) {
+              onLiveFrameRef.current(frameData);
+            }
+          }
+        } catch (e) {
+          console.warn('Live motion check deferred', e);
         }
       }
 
-      // Nhịp quét tự động định kỳ 10 giây theo yêu cầu người dùng, hoặc 1 giây nếu đang bận
-      const loopInterval = isAnalyzingRef.current ? 1000 : 10000;
-      timeoutId = setTimeout(runLiveLoop, loopInterval);
+      // Nhịp kiểm tra chuyển động đều đặn mỗi 450ms
+      timeoutId = setTimeout(runLiveLoop, isAnalyzingRef.current ? 600 : 450);
     };
 
-    // Quét lần đầu sau 1.2s khi mở camera để camera lấy nét ổn định
-    timeoutId = setTimeout(runLiveLoop, 1200);
+    // Quét lần đầu ngay sau 300ms khi mở camera
+    timeoutId = setTimeout(runLiveLoop, 300);
 
     return () => {
       isMounted = false;

@@ -145,13 +145,12 @@ export default function App() {
       if (activeAbortRef.current) {
         activeAbortRef.current.abort();
       }
-      setResult(null); // Clear stale overlay boxes immediately
       consecutiveEmptyFrames.current = 0;
-      setSilentNotice('Đang quét và dịch hình ảnh...');
+      setSilentNotice('Đang dịch tức thì...');
     } else {
       if (isAnalyzingRef.current) return;
-      // Nhịp quét nhanh tức thì: cho phép nhận diện tức thì (450ms)
-      if (Date.now() - lastScanTimestamp.current < 450) return;
+      // Nhịp quét nhanh: cho phép nhận diện tức thì khi camera ổn định
+      if (Date.now() - lastScanTimestamp.current < 400) return;
     }
 
     lastScanTimestamp.current = Date.now();
@@ -160,8 +159,8 @@ export default function App() {
 
     const abortController = new AbortController();
     activeAbortRef.current = abortController;
-    // 16-second timeout allows high-res vision OCR to complete without premature aborts
-    const abortTimeout = setTimeout(() => abortController.abort(), 16000);
+    // 7.5s timeout prevents any hung request from blocking the app
+    const abortTimeout = setTimeout(() => abortController.abort(), 7500);
 
     try {
       // Offline fallback: If device is offline, check offline database
@@ -170,11 +169,11 @@ export default function App() {
         return;
       }
 
-      // Fast image payload
+      // Fast image payload: camera frames are already ~25KB, send directly with 0ms overhead
       const compressedImage =
-        frameDataUrl.length < 320000
+        frameDataUrl.length < 250000 || frameDataUrl.startsWith('data:image/svg')
           ? frameDataUrl
-          : await compressImageForOCR(frameDataUrl, 960, 0.72);
+          : await compressImageForOCR(frameDataUrl, 720, 0.65);
 
       const userKey = getUserApiKey();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
