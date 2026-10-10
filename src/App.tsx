@@ -23,6 +23,11 @@ import {
   DownloadCloud,
   WifiOff,
   Key,
+  Volume2,
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { CameraView } from './components/CameraView';
 import { AROverlay } from './components/AROverlay';
@@ -39,6 +44,7 @@ import { compressImageForOCR } from './utils/imageCompressor';
 import { translateOfflineSnapshot } from './utils/offlineTranslator';
 import { getDownloadedPacks, getActivePackId, setActivePackId } from './utils/languagePackStorage';
 import { getUserApiKey } from './utils/apiKeyStorage';
+import { speakText } from './utils/audio';
 import { TRAVEL_SAMPLES } from './data/travelSamples';
 import {
   DetectedItem,
@@ -61,6 +67,8 @@ export default function App() {
   const [maskCoverMode, setMaskCoverMode] = useState(false); // Mặc định không dùng viền/hộp đen để chữ nằm trong suốt tự nhiên
   const [showFullArticle, setShowFullArticle] = useState(false);
   const [viewMode, setViewMode] = useState<'ar' | 'list'>('ar');
+  const [isPhotoSheetExpanded, setIsPhotoSheetExpanded] = useState(false);
+  const [copiedAll, setCopiedAll] = useState(false);
 
   // Modals & Drawers
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
@@ -169,11 +177,12 @@ export default function App() {
         return;
       }
 
-      // Fast image payload: camera frames are already ~25KB, send directly with 0ms overhead
-      const compressedImage =
-        frameDataUrl.length < 250000 || frameDataUrl.startsWith('data:image/svg')
-          ? frameDataUrl
-          : await compressImageForOCR(frameDataUrl, 720, 0.65);
+      // Fast image payload: for manual photo snap, keep high resolution (1080px) for sharp OCR
+      const compressedImage = isManualSnap
+        ? await compressImageForOCR(frameDataUrl, 1080, 0.85)
+        : frameDataUrl.length < 250000 || frameDataUrl.startsWith('data:image/svg')
+        ? frameDataUrl
+        : await compressImageForOCR(frameDataUrl, 720, 0.65);
 
       const userKey = getUserApiKey();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -214,8 +223,10 @@ export default function App() {
             }
           }
 
-          // If no result is active on screen, fallback to offline language pack
-          if (!result) {
+          // If manual snap failed, alert user clearly
+          if (isManualSnap) {
+            setSilentNotice('Máy chủ AI bận hoặc hết lượt. Bấm "Thử lại" hoặc dùng gói ngoại tuyến.');
+          } else if (!result) {
             const offlineData = translateOfflineSnapshot(undefined, activePackId);
             setResult(offlineData);
             setSilentNotice('⚡ Gói AI tạm bận. Đang dùng từ điển ngoại tuyến.');
@@ -256,6 +267,7 @@ export default function App() {
         if (data.items && data.items.length > 0) {
           consecutiveEmptyFrames.current = 0;
           setResult(data);
+          setSilentNotice(null);
         } else if (data.summary_translation) {
           consecutiveEmptyFrames.current = 0;
           setResult({
@@ -268,9 +280,12 @@ export default function App() {
               },
             ],
           });
+          setSilentNotice(null);
         } else {
           // No items detected in this frame (e.g. panned away or no text)
-          if (!staticImageUrl) {
+          if (isManualSnap) {
+            setSilentNotice('Không tìm thấy văn bản trong bức ảnh này. Hãy thử chụp gần hơn.');
+          } else if (!staticImageUrl) {
             consecutiveEmptyFrames.current++;
             if (consecutiveEmptyFrames.current >= 6) {
               setResult(null); // Clear stale boxes only after multiple seconds of continuous empty frames
@@ -306,7 +321,17 @@ export default function App() {
       isAnalyzingRef.current = false;
       setIsAnalyzing(false);
     }
-  }, [staticImageUrl]);
+  }, [staticImageUrl, activePackId]);
+
+  // Handle photo capture or uploaded image: sets static image and translates immediately
+  const handleCapturePhoto = useCallback((photoDataUrl: string) => {
+    setStaticImageUrl(photoDataUrl);
+    setResult(null); // Clear stale results immediately so user gets clean fresh translation
+    setSelectedItem(null);
+    setIsPhotoSheetExpanded(false);
+    setIsLiveTranslating(false);
+    handleLiveFrame(photoDataUrl, true);
+  }, [handleLiveFrame]);
 
   // Select sample preset (switches to static sample view with instant translation display)
   const handleSelectSample = (sample: TravelSample) => {
@@ -344,10 +369,16 @@ export default function App() {
               <h1 className="font-bold text-xs text-white tracking-tight">
                 Dịch Camera
               </h1>
-              <span className="flex items-center gap-1 text-[9px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-1 py-0.5 rounded font-mono font-bold">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                LIVE
-              </span>
+              {staticImageUrl ? (
+                <span className="flex items-center gap-1 text-[9px] text-sky-300 bg-sky-950/90 border border-sky-700/80 px-1 py-0.5 rounded font-mono font-bold shadow-sm">
+                  ẢNH ĐÃ CHỤP
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-[9px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-1 py-0.5 rounded font-mono font-bold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  LIVE
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -506,6 +537,7 @@ export default function App() {
         }`}>
           <CameraView
             onLiveFrame={handleLiveFrame}
+            onCapturePhoto={handleCapturePhoto}
             isAnalyzing={isAnalyzing}
             isLiveTranslating={isLiveTranslating}
             setIsLiveTranslating={setIsLiveTranslating}
@@ -554,6 +586,110 @@ export default function App() {
               }}
               detectedLang={result?.detected_language}
             />
+          )}
+
+          {/* Photo Translation Results Sheet / Card when viewing captured or static image */}
+          {staticImageUrl && result && (result.items?.length > 0 || result.summary_translation) && !showFullArticle && (
+            <div className={`absolute inset-x-3 bottom-18 sm:inset-x-8 sm:bottom-20 z-35 bg-slate-950/95 border border-emerald-500/60 rounded-2xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 ${
+              isPhotoSheetExpanded ? 'max-h-[55vh]' : 'max-h-[145px]'
+            }`}>
+              {/* Header Bar */}
+              <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800/80 shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                  <span className="text-xs font-bold text-white truncate">
+                    {result.detected_language ? `${result.detected_language} ➔ Tiếng Việt` : 'Bản dịch ảnh chụp'}
+                  </span>
+                  <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded-full font-mono font-semibold shrink-0">
+                    {result.items?.length || 1} đoạn
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* TTS Button */}
+                  <button
+                    onClick={() => {
+                      const textToRead = result.items?.map((i) => i.translated_text).join('. ') || result.summary_translation;
+                      speakText(textToRead, 'vi');
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 transition"
+                    title="Nghe đọc tiếng Việt"
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Copy Button */}
+                  <button
+                    onClick={() => {
+                      const textToCopy = result.items?.map((i) => i.translated_text).join('\n') || result.summary_translation;
+                      navigator.clipboard.writeText(textToCopy);
+                      setCopiedAll(true);
+                      setTimeout(() => setCopiedAll(false), 2000);
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                    title="Sao chép toàn bộ bản dịch"
+                  >
+                    {copiedAll ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+
+                  {/* Toggle Overlay Button */}
+                  <button
+                    onClick={() => setShowOverlayText(!showOverlayText)}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                    title={showOverlayText ? 'Ẩn chữ đè lên ảnh' : 'Hiện chữ đè lên ảnh'}
+                  >
+                    {showOverlayText ? <Eye className="w-3.5 h-3.5 text-amber-300" /> : <EyeOff className="w-3.5 h-3.5 text-slate-400" />}
+                  </button>
+
+                  {/* Expand/Collapse Button */}
+                  <button
+                    onClick={() => setIsPhotoSheetExpanded(!isPhotoSheetExpanded)}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                    title={isPhotoSheetExpanded ? 'Thu gọn' : 'Xem toàn bộ'}
+                  >
+                    {isPhotoSheetExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Items List */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
+                {result.items && result.items.length > 0 ? (
+                  result.items.map((it, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => setSelectedItem(it)}
+                      className={`p-2 rounded-xl border transition cursor-pointer ${
+                        selectedItem === it
+                          ? 'bg-emerald-950/60 border-emerald-400 text-white shadow-sm'
+                          : 'bg-slate-900/60 border-slate-800 text-slate-200 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold text-white text-xs leading-snug">{it.translated_text}</p>
+                          {it.original_text && (
+                            <p className="text-[11px] text-slate-400 mt-0.5 truncate">{it.original_text}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            speakText(it.translated_text, 'vi');
+                          }}
+                          className="p-1 text-slate-400 hover:text-emerald-300 shrink-0"
+                          title="Đọc câu này"
+                        >
+                          <Volume2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-slate-300 leading-relaxed whitespace-pre-line">{result.summary_translation}</p>
+                )}
+              </div>
+            </div>
           )}
 
           {/* Full Continuous Article Reader Overlay */}

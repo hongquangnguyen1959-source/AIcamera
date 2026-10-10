@@ -119,11 +119,12 @@ app.post('/api/translate-vision', async (req, res) => {
   ]
 }`;
 
-    // Multi-model sequence: ONLY ultra-fast flash-lite models (~1.1s latency)
+    // Multi-model sequence: prioritize active models with verified quota and sub-second latency
     const candidateModels = [
-      'gemini-3.1-flash-lite-preview',
-      'gemini-3.5-flash-lite',
       'gemini-flash-lite-latest',
+      'gemini-3.5-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-2.5-flash',
     ];
 
     let lastError: any = null;
@@ -134,7 +135,7 @@ app.post('/api/translate-vision', async (req, res) => {
         const config: any = {
           systemInstruction: 'AR OCR: Dịch chuẩn xác toàn bộ chữ trong ảnh sang tiếng Việt đầy đủ, rõ nghĩa, không viết tắt, tọa độ box_2d khớp đúng vị trí chữ gốc.',
           responseMimeType: 'application/json',
-          maxOutputTokens: 600,
+          maxOutputTokens: 1200,
         };
 
         const generatePromise = ai.models.generateContent({
@@ -153,8 +154,9 @@ app.post('/api/translate-vision', async (req, res) => {
           config,
         });
 
+        // 7.5s model timeout accommodates high-resolution photos and mobile connections
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Model timeout')), 3500)
+          setTimeout(() => reject(new Error('Model timeout')), 7500)
         );
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);

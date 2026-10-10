@@ -16,10 +16,11 @@ const CHINESE_REGEX = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff
 
 function cleanVerboseText(text: string): string {
   if (!text) return '';
-  return text
+  const cleaned = text
     .replace(CHINESE_REGEX, '')
     .replace(/\s*\([^)]*(?:nghĩa|dịch|giải thích|phiên âm)[^)]*\)/gi, '')
     .trim();
+  return cleaned || text.trim();
 }
 
 interface PositionedItem {
@@ -185,21 +186,18 @@ export const AROverlay: React.FC<AROverlayProps> = ({
               <div
                 className={`w-full flex items-center justify-center text-center transition-all ${
                   isSelected
-                    ? 'bg-amber-400 text-slate-950 font-black shadow-xl ring-2 ring-amber-300 rounded px-1 py-0.5'
+                    ? 'bg-amber-400 text-slate-950 font-black shadow-xl ring-2 ring-amber-300 rounded px-1.5 py-0.5 z-30'
                     : maskCoverMode
-                    ? 'bg-slate-950/80 border border-amber-400/30 text-amber-200 rounded px-1 py-0.5'
-                    : 'bg-transparent text-amber-300 px-0.5 py-0'
+                    ? 'bg-slate-950/90 border border-amber-400/40 text-amber-200 rounded px-1.5 py-0.5 shadow-md'
+                    : 'bg-slate-950/85 border border-emerald-400/60 text-emerald-200 font-bold rounded px-1.5 py-0.5 shadow-lg backdrop-blur-xs'
                 }`}
                 style={{ fontSize, lineHeight: '1.2' }}
               >
-                {/* Chữ dịch trực tiếp không có ô đen bao quanh, viền chữ sắc nét tương phản cao */}
                 <span
                   style={{
                     textShadow: isSelected
                       ? 'none'
-                      : maskCoverMode
-                      ? '0 1px 2px rgba(0,0,0,0.85)'
-                      : '0 1px 2px #000, 1px 0 2px #000, -1px 0 2px #000, 0 -1px 2px #000, 1px 1px 2px #000, -1px 1px 2px #000, 1px -1px 2px #000, -1px -1px 2px #000',
+                      : '0 1px 2px rgba(0,0,0,0.9)',
                   }}
                   className="font-bold select-none whitespace-normal break-words leading-tight max-w-full text-center tracking-tight"
                 >

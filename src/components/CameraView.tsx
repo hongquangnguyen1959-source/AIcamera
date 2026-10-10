@@ -22,6 +22,7 @@ import { TravelSample } from '../types';
 
 interface CameraViewProps {
   onLiveFrame: (imageDataUrl: string, isManualSnap?: boolean) => void;
+  onCapturePhoto: (imageDataUrl: string) => void;
   isAnalyzing: boolean;
   isLiveTranslating: boolean;
   setIsLiveTranslating: (val: boolean) => void;
@@ -41,6 +42,7 @@ interface CameraViewProps {
 
 export const CameraView: React.FC<CameraViewProps> = ({
   onLiveFrame,
+  onCapturePhoto,
   isAnalyzing,
   isLiveTranslating,
   setIsLiveTranslating,
@@ -60,7 +62,9 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [isShutterFlashing, setIsShutterFlashing] = useState(false);
 
   // Stable refs to prevent effect re-trigger churn
   const isAnalyzingRef = useRef(isAnalyzing);
@@ -304,6 +308,82 @@ export const CameraView: React.FC<CameraViewProps> = ({
     return canvas.toDataURL('image/jpeg', 0.60);
   }, [cameraReady, staticImageUrl]);
 
+  // High-resolution photo capture for dedicated photo translation
+  const captureHighResPhoto = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return null;
+    const vW = video.videoWidth || 640;
+    const vH = video.videoHeight || 480;
+    if (vW === 0 || vH === 0) return null;
+
+    const canvas = document.createElement('canvas');
+    // 1280px high-resolution capture: ensures all Chinese/English characters are razor sharp
+    const maxDim = 1280;
+    const scale = Math.min(1, maxDim / Math.max(vW, vH));
+    const targetW = Math.round(vW * scale);
+    const targetH = Math.round(vH * scale);
+
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    if (facingMode === 'user') {
+      ctx.translate(targetW, 0);
+      ctx.scale(-1, 1);
+    }
+    try {
+      ctx.drawImage(video, 0, 0, targetW, targetH);
+      return canvas.toDataURL('image/jpeg', 0.85);
+    } catch (err) {
+      console.warn('Canvas drawImage error during capture:', err);
+      return null;
+    }
+  }, [facingMode]);
+
+  // Handle Photo Capture to Translate action
+  const handleTakePhotoToTranslate = () => {
+    const video = videoRef.current;
+    // Check if camera stream is active and has valid frame dimensions
+    if (video && (video.videoWidth > 0 || video.readyState >= 2)) {
+      const photo = captureHighResPhoto();
+      if (photo) {
+        // Haptic feedback if supported on mobile
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(60); } catch (_) {}
+        }
+        // Camera shutter flash visual effect
+        setIsShutterFlashing(true);
+        setTimeout(() => setIsShutterFlashing(false), 200);
+
+        onCapturePhoto(photo);
+        return;
+      }
+    }
+    // Fallback: If camera stream is not ready or blocked on this device, open device camera or file selector
+    if (nativeCameraInputRef.current) {
+      nativeCameraInputRef.current.click();
+    } else if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handle native camera photo capture input
+  const handleNativeCameraPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        onCapturePhoto(dataUrl);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   // SMART LIVE TRANSLATION LOOP (Tự động nhận diện tức thì khi hướng camera vào văn bản mới)
   useEffect(() => {
     if (!isLiveTranslating || staticImageUrl || !cameraReady) return;
@@ -400,7 +480,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
       if (dataUrl) {
-        onLiveFrame(dataUrl);
+        onCapturePhoto(dataUrl);
       }
     };
     reader.readAsDataURL(file);
@@ -420,12 +500,25 @@ export const CameraView: React.FC<CameraViewProps> = ({
         onChange={handleFileUpload}
         className="hidden"
       />
+      <input
+        type="file"
+        ref={nativeCameraInputRef}
+        accept="image/*"
+        capture="environment"
+        onChange={handleNativeCameraPhoto}
+        className="hidden"
+      />
 
       {/* Main Viewport Container */}
       <div
         ref={viewportRef}
         className="relative w-full h-full flex items-center justify-center overflow-hidden bg-slate-950"
       >
+        {/* Shutter flash effect */}
+        {isShutterFlashing && (
+          <div className="absolute inset-0 bg-white/80 pointer-events-none z-50 transition-opacity duration-200" />
+        )}
+
         {/* Missing API Key helper banner */}
         {isMissingApiKey && !staticImageUrl && (
           <div className="absolute top-14 inset-x-3 sm:inset-x-8 max-w-md mx-auto z-30 bg-slate-950/95 border border-amber-500/60 rounded-2xl p-3 shadow-2xl backdrop-blur-md text-slate-100 flex items-start gap-2.5 pointer-events-auto animate-in fade-in">
@@ -494,7 +587,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
           </div>
         )}
         {staticImageUrl ? (
-          // Static Preset Image Mode: shrinkwrap wrapper guarantees exact coordinate alignment
+          // Static Preset / Captured Photo Mode: shrinkwrap wrapper guarantees exact coordinate alignment
           <div className="relative inline-flex items-center justify-center max-w-full max-h-full">
             <img
               src={staticImageUrl}
@@ -505,6 +598,41 @@ export const CameraView: React.FC<CameraViewProps> = ({
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
               {children}
             </div>
+
+            {/* Active AI Scanning animation over photo */}
+            {isAnalyzing && (
+              <>
+                <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_20px_#10b981] animate-pulse pointer-events-none top-1/2 -translate-y-1/2 z-30" />
+                <div className="absolute top-4 inset-x-0 flex justify-center z-40 pointer-events-none px-4">
+                  <div className="bg-slate-900/95 border border-emerald-500/80 px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 backdrop-blur-md animate-pulse">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                    <span className="text-xs font-bold text-emerald-200">Đang nhận diện &amp; dịch ảnh chụp bằng AI...</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* No text detected helper when scan completes with 0 items */}
+            {!isAnalyzing && detectedCount === 0 && (
+              <div className="absolute bottom-20 inset-x-4 max-w-sm mx-auto z-30 bg-slate-950/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md text-center pointer-events-auto">
+                <p className="text-xs text-slate-200 font-semibold">Chưa phát hiện văn bản rõ ràng trong ảnh này</p>
+                <p className="text-[11px] text-slate-400 mt-1">Gợi ý: Hãy chụp gần hơn vào dòng chữ, giữ thẳng góc và nơi có đủ ánh sáng.</p>
+                <div className="flex items-center justify-center gap-2 mt-3">
+                  <button
+                    onClick={onClearStaticImage}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md transition"
+                  >
+                    Mở Camera chụp lại
+                  </button>
+                  <button
+                    onClick={() => onLiveFrame(staticImageUrl, true)}
+                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition"
+                  >
+                    Thử quét lại
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           // CONTINUOUS LIVE CAMERA STREAM: Wrapper matches exact aspect ratio of video frame
@@ -562,17 +690,31 @@ export const CameraView: React.FC<CameraViewProps> = ({
             <p className="text-xs text-slate-300 leading-relaxed">{cameraError}</p>
             <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
               <button
+                onClick={() => nativeCameraInputRef.current?.click()}
+                className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Chụp ảnh bằng thiết bị</span>
+              </button>
+              <button
                 onClick={() => fileInputRef.current?.click()}
-                className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Tải ảnh lên</span>
+                <span>Chọn ảnh</span>
+              </button>
+              <button
+                onClick={restartCamera}
+                className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-700"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Thử lại Camera</span>
               </button>
               <button
                 onClick={() => onSelectSample(TRAVEL_SAMPLES[0])}
                 className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-700"
               >
-                <span>🇯🇵 Thử Menu Nhật Bản</span>
+                <span>🇯🇵 Thử Menu mẫu</span>
               </button>
             </div>
           </div>
@@ -581,13 +723,13 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
       {/* Compact Top Camera Quick Controls */}
       {staticImageUrl ? (
-        <div className="absolute top-3 left-3 z-30 pointer-events-auto">
+        <div className="absolute top-3 left-3 z-30 pointer-events-auto flex items-center gap-2">
           <button
             onClick={onClearStaticImage}
-            className="py-1 px-3 bg-slate-900/85 hover:bg-slate-800 border border-slate-700/80 text-white rounded-xl text-xs font-semibold backdrop-blur-md flex items-center gap-1.5 shadow-md transition-colors"
+            className="py-1 px-3 bg-emerald-600 hover:bg-emerald-500 border border-emerald-400/80 text-white rounded-xl text-xs font-semibold backdrop-blur-md flex items-center gap-1.5 shadow-md transition-colors"
           >
-            <Camera className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Mở Camera</span>
+            <Camera className="w-3.5 h-3.5" />
+            <span>Chụp lại / Mở Camera</span>
           </button>
         </div>
       ) : (
@@ -628,46 +770,111 @@ export const CameraView: React.FC<CameraViewProps> = ({
         </div>
       )}
 
-      {/* Bottom Floating Bar: 3 buttons (Tải ảnh, Xóa chữ cũ, Đang dịch) */}
-      <div className="absolute bottom-4 inset-x-0 flex items-center justify-center gap-3 sm:gap-4 z-30 pointer-events-auto px-3">
-        {/* 1. Tải ảnh */}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="h-10 px-4 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
-          title="Tải ảnh từ thư viện"
-        >
-          <ImageIcon className="w-4 h-4 text-sky-400" />
-          <span>Tải ảnh</span>
-        </button>
+      {/* Bottom Floating Bar */}
+      <div className="absolute bottom-4 inset-x-0 flex items-center justify-center gap-2 sm:gap-3 z-30 pointer-events-auto px-3">
+        {staticImageUrl ? (
+          // In PHOTO MODE: Controls tailored for inspecting and retaking photo
+          <>
+            {/* 1. Mở Camera / Chụp ảnh khác */}
+            <button
+              onClick={onClearStaticImage}
+              className="h-12 px-5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-2 shadow-[0_4px_20px_rgba(16,185,129,0.45)] border-2 border-emerald-300/40 backdrop-blur-md transition-all active:scale-95 cursor-pointer ring-4 ring-emerald-500/20"
+              title="Mở lại camera trực tiếp để chụp ảnh mới"
+            >
+              <Camera className="w-4 h-4" />
+              <span>Mở Camera</span>
+            </button>
 
-        {/* 2. Xóa chữ cũ */}
-        <button
-          onClick={onClearResult}
-          className="h-10 px-4 rounded-full bg-slate-900/85 hover:bg-rose-950/60 border border-slate-700/80 hover:border-rose-600/60 text-slate-200 hover:text-rose-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
-          title="Xóa các chữ dịch cũ trên màn hình"
-        >
-          <Trash2 className="w-4 h-4 text-rose-400" />
-          <span>Xóa chữ cũ</span>
-        </button>
+            {/* 2. Dịch lại ảnh này */}
+            <button
+              onClick={() => onLiveFrame(staticImageUrl, true)}
+              disabled={isAnalyzing}
+              className="h-10 px-3.5 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
+              title="Dịch lại ảnh này"
+            >
+              <Scan className={`w-4 h-4 text-emerald-400 ${isAnalyzing ? 'animate-spin' : ''}`} />
+              <span>{isAnalyzing ? 'Đang dịch...' : 'Dịch lại'}</span>
+            </button>
 
-        {/* 3. Đang dịch / Quét ngay */}
-        <button
-          onClick={() => {
-            const frame = captureFrame();
-            if (frame) {
-              onLiveFrame(frame, true);
-            }
-          }}
-          className={`h-11 px-5 rounded-full font-bold text-xs flex items-center gap-2 shadow-xl border backdrop-blur-md transition-transform active:scale-95 cursor-pointer ${
-            isAnalyzing
-              ? 'bg-emerald-600/90 border-emerald-400 text-white'
-              : 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400/60 text-white'
-          }`}
-          title="Dịch ngay hình ảnh này"
-        >
-          <Scan className={`w-4 h-4 ${isAnalyzing ? 'animate-spin' : ''}`} />
-          <span>{isAnalyzing ? 'Đang dịch...' : isLiveTranslating ? 'Đang dịch' : 'Quét ngay'}</span>
-        </button>
+            {/* 3. Tải ảnh khác */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="h-10 px-3.5 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
+              title="Chọn ảnh khác từ thư viện"
+            >
+              <ImageIcon className="w-4 h-4 text-sky-400" />
+              <span className="hidden xs:inline">Ảnh khác</span>
+            </button>
+
+            {/* 4. Xóa chữ */}
+            {onClearResult && (
+              <button
+                onClick={onClearResult}
+                className="h-10 px-3.5 rounded-full bg-slate-900/85 hover:bg-rose-950/60 border border-slate-700/80 hover:border-rose-600/60 text-slate-300 hover:text-rose-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
+                title="Xóa các khung chữ dịch"
+              >
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <span className="hidden sm:inline">Xóa chữ</span>
+              </button>
+            )}
+          </>
+        ) : (
+          // In LIVE CAMERA MODE: Prominent Shutter Button for photo capture to translate
+          <>
+            {/* 1. Tải ảnh từ thư viện */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="h-10 px-3.5 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
+              title="Tải ảnh từ thư viện"
+            >
+              <ImageIcon className="w-4 h-4 text-sky-400" />
+              <span className="hidden xs:inline">Tải ảnh</span>
+            </button>
+
+            {/* 2. CHỤP ẢNH ĐỂ DỊCH (Primary Shutter Button) */}
+            <button
+              onClick={handleTakePhotoToTranslate}
+              className="h-12 px-5 sm:px-6 rounded-full bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-white font-bold text-xs flex items-center gap-2.5 shadow-[0_4px_22px_rgba(16,185,129,0.5)] border-2 border-white/50 backdrop-blur-md transition-all active:scale-95 cursor-pointer ring-4 ring-emerald-500/25"
+              title="Chụp ảnh để dịch và giữ khung hình cố định"
+            >
+              <div className="w-5 h-5 rounded-full border-2 border-white flex items-center justify-center bg-white/20 shadow-inner">
+                <div className="w-2.5 h-2.5 rounded-full bg-white shadow-sm" />
+              </div>
+              <span className="text-sm font-bold tracking-tight">Chụp ảnh dịch</span>
+            </button>
+
+            {/* 3. Quét ngay không dừng camera */}
+            <button
+              onClick={() => {
+                const frame = captureFrame();
+                if (frame) {
+                  onLiveFrame(frame, true);
+                }
+              }}
+              className={`h-10 px-3.5 rounded-full font-semibold text-xs flex items-center gap-1.5 shadow-lg border backdrop-blur-md transition-transform active:scale-95 cursor-pointer ${
+                isAnalyzing
+                  ? 'bg-emerald-600/90 border-emerald-400 text-white'
+                  : 'bg-slate-900/85 hover:bg-slate-800 border-slate-700/80 text-slate-200'
+              }`}
+              title="Quét tức thì ngay trên luồng camera"
+            >
+              <Scan className={`w-4 h-4 text-emerald-400 ${isAnalyzing ? 'animate-spin' : ''}`} />
+              <span className="hidden xs:inline">{isAnalyzing ? 'Đang dịch...' : 'Quét live'}</span>
+            </button>
+
+            {/* 4. Xóa chữ cũ */}
+            {onClearResult && (
+              <button
+                onClick={onClearResult}
+                className="h-10 px-3 rounded-full bg-slate-900/85 hover:bg-rose-950/60 border border-slate-700/80 hover:border-rose-600/60 text-slate-300 hover:text-rose-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
+                title="Xóa các chữ dịch cũ trên màn hình"
+              >
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <span className="hidden sm:inline">Xóa chữ</span>
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
