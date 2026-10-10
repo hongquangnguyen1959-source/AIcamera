@@ -57,7 +57,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
   onOpenApiKeyModal,
   children,
 }) => {
-  const [showSamplePicker, setShowSamplePicker] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -286,7 +285,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       canvasRef.current = document.createElement('canvas');
     }
     const canvas = canvasRef.current;
-    const maxDim = 720;
+    const maxDim = 960;
     const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
     const targetW = Math.round(video.videoWidth * scale);
     const targetH = Math.round(video.videoHeight * scale);
@@ -300,8 +299,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (!ctx) return null;
 
     ctx.drawImage(video, 0, 0, targetW, targetH);
-    // 0.58 JPEG produces crisp OCR with tiny ~35KB payload for true 1-second latency
-    return canvas.toDataURL('image/jpeg', 0.58);
+    // 0.75 JPEG ensures clear stroke recognition for Asian fonts (Chinese, Japanese, Korean)
+    return canvas.toDataURL('image/jpeg', 0.75);
   }, [cameraReady, staticImageUrl]);
 
   // SMOOTH LIVE TRANSLATION LOOP (Completely non-blocking, leaves video stream uninterrupted at 60fps)
@@ -327,8 +326,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
         }
       }
 
-      // Throttle interval to 8 seconds if shared quota is exhausted to avoid rate-limit spamming
-      const loopInterval = isQuotaExhausted ? 8000 : 750;
+      // Nhịp quét tức thì: 1200ms (1.2 giây) để nội dung dịch hiện ra liền ngay khi vừa lia camera vào chữ
+      const loopInterval = isAnalyzingRef.current ? 350 : 1200;
       timeoutId = setTimeout(runLiveLoop, loopInterval);
     };
 
@@ -375,6 +374,73 @@ export const CameraView: React.FC<CameraViewProps> = ({
         ref={viewportRef}
         className="relative w-full h-full flex items-center justify-center overflow-hidden bg-slate-950"
       >
+        {/* Missing API Key helper banner */}
+        {isMissingApiKey && !staticImageUrl && (
+          <div className="absolute top-14 inset-x-3 sm:inset-x-8 max-w-md mx-auto z-30 bg-slate-950/95 border border-amber-500/60 rounded-2xl p-3 shadow-2xl backdrop-blur-md text-slate-100 flex items-start gap-2.5 pointer-events-auto animate-in fade-in">
+            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 text-xs">
+              <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                Chưa có Gemini API Key trên Vercel
+              </div>
+              <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+                Camera đang tự động dịch bằng gói ngoại tuyến <strong>{activePack.shortName}</strong>. Để dịch AI trực tuyến đa ngôn ngữ, hãy nhập Key miễn phí:
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                {onOpenApiKeyModal && (
+                  <button
+                    onClick={onOpenApiKeyModal}
+                    className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg font-bold text-[11px] shadow-sm flex items-center gap-1 transition"
+                  >
+                    <Key className="w-3 h-3" />
+                    <span>Nhập Key miễn phí (30s)</span>
+                  </button>
+                )}
+                {onOpenOfflinePacks && (
+                  <button
+                    onClick={onOpenOfflinePacks}
+                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] border border-slate-700 transition"
+                  >
+                    <span>Quản lý gói ngoại tuyến</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quota limit helper banner */}
+        {!isMissingApiKey && isQuotaExhausted && !staticImageUrl && (
+          <div className="absolute top-14 inset-x-3 sm:inset-x-8 max-w-md mx-auto z-30 bg-slate-950/95 border border-amber-500/60 rounded-2xl p-3 shadow-2xl backdrop-blur-md text-slate-100 flex items-start gap-2.5 pointer-events-auto animate-in fade-in">
+            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 text-xs">
+              <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                AI dùng chung đã hết 20 lượt miễn phí hôm nay
+              </div>
+              <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+                Ứng dụng đang dịch bằng gói từ điển <strong>{activePack.shortName}</strong>. Bạn có thể dán Gemini API Key miễn phí từ Google AI Studio để tiếp tục dùng AI tốc độ cao:
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                {onOpenApiKeyModal && (
+                  <button
+                    onClick={onOpenApiKeyModal}
+                    className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg font-bold text-[11px] shadow-sm flex items-center gap-1 transition"
+                  >
+                    <Key className="w-3 h-3" />
+                    <span>Nhập Key riêng (30s)</span>
+                  </button>
+                )}
+                {onOpenOfflinePacks && (
+                  <button
+                    onClick={onOpenOfflinePacks}
+                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] border border-slate-700 transition"
+                  >
+                    <span>Đổi gói ngoại tuyến</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {staticImageUrl ? (
           // Static Preset Image Mode: shrinkwrap wrapper guarantees exact coordinate alignment
           <div className="relative inline-flex items-center justify-center max-w-full max-h-full">
@@ -389,7 +455,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
             </div>
           </div>
         ) : (
-          // CONTINUOUS LIVE CAMERA STREAM
+          // CONTINUOUS LIVE CAMERA STREAM: Wrapper matches exact aspect ratio of video frame
           <div
             className="relative flex items-center justify-center max-w-full max-h-full overflow-hidden"
             style={
@@ -412,18 +478,21 @@ export const CameraView: React.FC<CameraViewProps> = ({
               }`}
             />
 
-            {/* Subtle Viewfinder Target Reticle (Only visible before scanning to guide alignment) */}
-            {detectedCount === 0 && (
-              <div className="absolute inset-8 sm:inset-16 pointer-events-none flex flex-col justify-between opacity-50 transition-opacity">
-                <div className="flex justify-between">
-                  <div className="w-5 h-5 border-t-2 border-l-2 border-emerald-400/70 rounded-tl-lg" />
-                  <div className="w-5 h-5 border-t-2 border-r-2 border-emerald-400/70 rounded-tr-lg" />
-                </div>
-                <div className="flex justify-between">
-                  <div className="w-5 h-5 border-b-2 border-l-2 border-emerald-400/70 rounded-bl-lg" />
-                  <div className="w-5 h-5 border-b-2 border-r-2 border-emerald-400/70 rounded-br-lg" />
-                </div>
+            {/* Viewfinder Target Reticle / Corner brackets */}
+            <div className="absolute inset-6 sm:inset-14 pointer-events-none flex flex-col justify-between">
+              <div className="flex justify-between">
+                <div className="w-7 h-7 border-t-2 border-l-2 border-emerald-400 rounded-tl-lg shadow-sm" />
+                <div className="w-7 h-7 border-t-2 border-r-2 border-emerald-400 rounded-tr-lg shadow-sm" />
               </div>
+              <div className="flex justify-between">
+                <div className="w-7 h-7 border-b-2 border-l-2 border-emerald-400 rounded-bl-lg shadow-sm" />
+                <div className="w-7 h-7 border-b-2 border-r-2 border-emerald-400 rounded-br-lg shadow-sm" />
+              </div>
+            </div>
+
+            {/* Real-time laser scanning line during live analysis */}
+            {isLiveTranslating && (
+              <div className="absolute inset-x-6 sm:inset-x-14 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-pulse pointer-events-none top-1/2 -translate-y-1/2" />
             )}
 
             {/* AR Overlay rendered directly on top of the live video */}
@@ -433,110 +502,103 @@ export const CameraView: React.FC<CameraViewProps> = ({
           </div>
         )}
 
-        {/* Camera Permission / Error Dialog (Only shown if camera denied and no static image) */}
+        {/* Camera Permission / Error Dialog */}
         {cameraError && !staticImageUrl && (
-          <div className="absolute inset-x-4 top-20 max-w-sm mx-auto bg-slate-900/95 border border-slate-700 rounded-2xl p-4 shadow-2xl backdrop-blur-md z-30 text-center space-y-3">
-            <AlertCircle className="w-7 h-7 text-amber-400 mx-auto" />
-            <h4 className="text-xs font-bold text-white">Chưa cấp quyền Camera</h4>
-            <p className="text-[11px] text-slate-300 leading-relaxed">{cameraError}</p>
-            <div className="flex items-center justify-center gap-2 pt-1">
+          <div className="absolute inset-x-4 top-20 sm:top-24 max-w-lg mx-auto bg-slate-900/95 border border-amber-500/50 rounded-2xl p-4 shadow-2xl backdrop-blur-md z-30 text-center space-y-3">
+            <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+            <h4 className="text-sm font-bold text-white">Chế độ Thử nghiệm Du lịch</h4>
+            <p className="text-xs text-slate-300 leading-relaxed">{cameraError}</p>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Tải ảnh</span>
+                <span>Tải ảnh lên</span>
               </button>
               <button
-                onClick={() => setShowSamplePicker(true)}
+                onClick={() => onSelectSample(TRAVEL_SAMPLES[0])}
                 className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-700"
               >
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Ảnh mẫu</span>
+                <span>🇯🇵 Thử Menu Nhật Bản</span>
               </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Top Floating Utility Controls (Discreet & Non-Intrusive) */}
-      <div className="absolute top-3 inset-x-3 sm:top-4 sm:inset-x-4 flex items-center justify-between z-30 pointer-events-none">
-        {/* Left: Back to live camera button if viewing static image */}
-        <div>
-          {staticImageUrl && (
+      {/* Compact Top Camera Quick Controls */}
+      {staticImageUrl ? (
+        <div className="absolute top-3 left-3 z-30 pointer-events-auto">
+          <button
+            onClick={onClearStaticImage}
+            className="py-1 px-3 bg-slate-900/85 hover:bg-slate-800 border border-slate-700/80 text-white rounded-xl text-xs font-semibold backdrop-blur-md flex items-center gap-1.5 shadow-md transition-colors"
+          >
+            <Camera className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Mở Camera</span>
+          </button>
+        </div>
+      ) : (
+        <div className="absolute top-3 right-3 flex items-center gap-1.5 z-30 pointer-events-auto">
+          {hasTorch && (
             <button
-              onClick={onClearStaticImage}
-              className="pointer-events-auto py-1.5 px-3 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-white rounded-full text-xs font-semibold backdrop-blur-md flex items-center gap-1.5 shadow-lg transition-transform active:scale-95"
+              onClick={toggleTorch}
+              className={`w-8 h-8 rounded-full border backdrop-blur-md transition-all flex items-center justify-center shadow-md ${
+                torchOn
+                  ? 'bg-amber-500 border-amber-400 text-slate-950 font-bold'
+                  : 'bg-slate-950/60 border-slate-700/60 text-slate-300 hover:text-white'
+              }`}
+              title="Bật/Tắt Đèn Flash"
             >
-              <Camera className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Camera trực tiếp</span>
+              {torchOn ? <Zap className="w-3.5 h-3.5" /> : <ZapOff className="w-3.5 h-3.5" />}
             </button>
           )}
+
+          <button
+            onClick={switchCamera}
+            className="w-8 h-8 rounded-full bg-slate-950/60 hover:bg-slate-900 border border-slate-700/60 text-slate-300 hover:text-white backdrop-blur-md transition-all flex items-center justify-center shadow-md"
+            title="Đổi camera trước/sau"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={() => setIsLiveTranslating(!isLiveTranslating)}
+            className={`w-8 h-8 rounded-full border backdrop-blur-md transition-all flex items-center justify-center shadow-md ${
+              isLiveTranslating
+                ? 'bg-slate-950/60 border-slate-700/60 text-slate-300 hover:text-white'
+                : 'bg-emerald-600 border-emerald-500 text-white'
+            }`}
+            title={isLiveTranslating ? 'Giữ hình ảnh' : 'Tiếp tục dịch live'}
+          >
+            {isLiveTranslating ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+          </button>
         </div>
+      )}
 
-        {/* Right: Camera utility cluster (Live/Pause, Torch, Flip) */}
-        {!staticImageUrl && (
-          <div className="flex items-center gap-1.5 pointer-events-auto bg-slate-950/70 border border-slate-800 rounded-full p-1 backdrop-blur-md shadow-lg">
-            {/* Live / Pause Button */}
-            <button
-              onClick={() => setIsLiveTranslating(!isLiveTranslating)}
-              className={`p-1.5 rounded-full text-xs transition-colors ${
-                isLiveTranslating
-                  ? 'text-emerald-400 hover:text-white'
-                  : 'bg-emerald-600 text-white shadow-xs'
-              }`}
-              title={isLiveTranslating ? 'Tạm dừng để giữ khung hình' : 'Tiếp tục dịch trực tiếp'}
-            >
-              {isLiveTranslating ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-            </button>
-
-            {hasTorch && (
-              <button
-                onClick={toggleTorch}
-                className={`p-1.5 rounded-full transition-colors ${
-                  torchOn ? 'text-amber-400' : 'text-slate-400 hover:text-white'
-                }`}
-                title="Bật/Tắt đèn Flash"
-              >
-                {torchOn ? <Zap className="w-3.5 h-3.5" /> : <ZapOff className="w-3.5 h-3.5" />}
-              </button>
-            )}
-
-            {/* Flip Camera */}
-            <button
-              onClick={switchCamera}
-              className="p-1.5 rounded-full text-slate-400 hover:text-white transition-colors"
-              title="Đổi camera trước/sau"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Clean Bottom Floating Dock */}
-      <div className="absolute bottom-4 inset-x-4 flex items-center justify-center gap-3 z-30 pointer-events-none">
-        {/* Upload Button */}
+      {/* Bottom Floating Bar: 3 buttons (Tải ảnh, Xóa chữ cũ, Đang dịch) */}
+      <div className="absolute bottom-4 inset-x-0 flex items-center justify-center gap-3 sm:gap-4 z-30 pointer-events-auto px-3">
+        {/* 1. Tải ảnh */}
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="pointer-events-auto h-11 w-11 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700 text-slate-200 flex items-center justify-center backdrop-blur-md shadow-lg transition-transform active:scale-95"
+          className="h-10 px-4 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700/80 text-slate-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
           title="Tải ảnh từ thư viện"
         >
-          <ImageIcon className="w-4.5 h-4.5 text-sky-400" />
+          <ImageIcon className="w-4 h-4 text-sky-400" />
+          <span>Tải ảnh</span>
         </button>
 
-        {/* Clear Translation Overlay Button (if any text currently visible) */}
-        {detectedCount > 0 && onClearResult && (
-          <button
-            onClick={onClearResult}
-            className="pointer-events-auto h-11 w-11 rounded-full bg-slate-900/85 hover:bg-rose-950/60 border border-slate-700 hover:border-rose-700/60 text-slate-300 hover:text-rose-300 flex items-center justify-center backdrop-blur-md shadow-lg transition-transform active:scale-95"
-            title="Xóa chữ dịch cũ"
-          >
-            <Trash2 className="w-4.5 h-4.5 text-rose-400" />
-          </button>
-        )}
+        {/* 2. Xóa chữ cũ */}
+        <button
+          onClick={onClearResult}
+          className="h-10 px-4 rounded-full bg-slate-900/85 hover:bg-rose-950/60 border border-slate-700/80 hover:border-rose-600/60 text-slate-200 hover:text-rose-200 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-semibold transition-transform active:scale-95"
+          title="Xóa các chữ dịch cũ trên màn hình"
+        >
+          <Trash2 className="w-4 h-4 text-rose-400" />
+          <span>Xóa chữ cũ</span>
+        </button>
 
-        {/* Central Prominent Shutter Button */}
+        {/* 3. Đang dịch / Quét ngay */}
         <button
           onClick={() => {
             const frame = captureFrame();
@@ -544,72 +606,17 @@ export const CameraView: React.FC<CameraViewProps> = ({
               onLiveFrame(frame, true);
             }
           }}
-          className="pointer-events-auto h-12 px-5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shadow-xl shadow-emerald-950/50 border border-emerald-400/40 backdrop-blur-md transition-transform active:scale-95 cursor-pointer"
+          className={`h-11 px-5 rounded-full font-bold text-xs flex items-center gap-2 shadow-xl border backdrop-blur-md transition-transform active:scale-95 cursor-pointer ${
+            isAnalyzing
+              ? 'bg-emerald-600/90 border-emerald-400 text-white'
+              : 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400/60 text-white'
+          }`}
           title="Dịch ngay hình ảnh này"
         >
           <Scan className={`w-4 h-4 ${isAnalyzing ? 'animate-spin' : ''}`} />
-          <span>{isAnalyzing ? 'Đang dịch...' : 'Quét ngay'}</span>
-        </button>
-
-        {/* Travel Samples Trigger Button */}
-        <button
-          onClick={() => setShowSamplePicker(true)}
-          className="pointer-events-auto h-11 px-3.5 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700 text-amber-300 flex items-center gap-1.5 backdrop-blur-md shadow-lg text-xs font-medium transition-transform active:scale-95"
-          title="Thử các ảnh mẫu du lịch"
-        >
-          <Sparkles className="w-4 h-4 text-amber-400" />
-          <span className="hidden xs:inline">Mẫu thử</span>
+          <span>{isAnalyzing ? 'Đang dịch...' : isLiveTranslating ? 'Đang dịch' : 'Quét ngay'}</span>
         </button>
       </div>
-
-      {/* Travel Samples Modal Drawer (Clean slide-up popup only when requested) */}
-      {showSamplePicker && (
-        <div
-          className="absolute inset-0 z-50 bg-black/70 backdrop-blur-xs flex flex-col justify-end pointer-events-auto animate-in fade-in"
-          onClick={() => setShowSamplePicker(false)}
-        >
-          <div
-            className="bg-slate-900 border-t border-slate-800 rounded-t-3xl p-4 max-h-[70vh] overflow-y-auto space-y-3 shadow-2xl animate-in slide-in-from-bottom"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                  Chọn ảnh mẫu du lịch thử nghiệm
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowSamplePicker(false)}
-                className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded-lg bg-slate-800"
-              >
-                Đóng
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              {TRAVEL_SAMPLES.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => {
-                    onSelectSample(s);
-                    setShowSamplePicker(false);
-                  }}
-                  className="flex items-start gap-3 p-2.5 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 text-left transition-all active:scale-[0.98]"
-                >
-                  <span className="text-2xl mt-0.5">{s.flag}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-xs text-white truncate">{s.title}</div>
-                    <div className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">
-                      {s.country} · {s.description}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

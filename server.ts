@@ -65,18 +65,8 @@ app.post('/api/translate-vision', async (req, res) => {
 
     if (!userApiKey) {
       return res.status(401).json({
-        error: 'Chưa cấu hình GEMINI_API_KEY trên Vercel. Bạn có thể bấm [Cài đặt API Key] trên màn hình để dán Key miễn phí (hoặc thêm GEMINI_API_KEY trong Vercel Settings > Environment Variables).',
+        error: 'Chưa cấu hình GEMINI_API_KEY trên Vercel. Bạn có thể bấm [Cài đặt API Key] trên màn hình để dán Key miễn phí.',
         code: 'MISSING_API_KEY',
-      });
-    }
-
-    // Circuit-breaker check: If using default shared key and currently cooling down from 429
-    const isCustomKey = Boolean(req.headers['x-gemini-api-key']);
-    if (!isCustomKey && Date.now() < sharedKeyCooldownUntil) {
-      return res.status(429).json({
-        error: 'Hệ thống AI dùng chung đã hết 20 lượt miễn phí hôm nay. Đang sử dụng chế độ từ điển ngoại tuyến.',
-        code: 'QUOTA_EXHAUSTED',
-        isQuota: true,
       });
     }
 
@@ -102,7 +92,6 @@ app.post('/api/translate-vision', async (req, res) => {
       if (parts[0].includes('base64')) {
         base64Data = rawPayload;
       } else {
-        // Handle URL-encoded or raw payload (e.g. SVG)
         const decoded = decodeURIComponent(rawPayload);
         base64Data = Buffer.from(decoded, 'utf8').toString('base64');
       }
@@ -116,36 +105,36 @@ app.post('/api/translate-vision', async (req, res) => {
       return res.json(cached.data);
     }
 
-    // Ultra-fast OCR prompt: Nhận diện từng dòng chữ riêng lẻ, vị trí chuẩn 1:1, không gộp khối, không chồng đè
-    const prompt = `Bạn là hệ thống AR Camera dịch trực tiếp thời gian thực.
-QUY TẮC BẮT BUỘC:
-1. MỖI DÒNG VĂN BẢN / MỖI TIÊU ĐỀ / MỖI MỤC LÀ 1 ITEM RIÊNG BIỆT TRONG 'items'.
-2. TUYỆT ĐỐI KHÔNG GỘP NHIỀU DÒNG VĂN BẢN VÀO 1 ITEM. (Ví dụ: 5 dòng tin tức phải là 5 item độc lập riêng rẽ, mỗi item chứa 1 dòng).
-3. TỌA ĐỘ box_2d [ymin, xmin, ymax, xmax] (0 đến 1000) PHẢI ÔM SÁT CHÍNH XÁC ĐÚNG VỊ TRÍ 1 DÒNG CHỮ ĐÓ TRÊN ẢNH:
-   - ymin và ymax chỉ ôm đúng chiều cao của 1 dòng chữ đó (thường chỉ 15 đến 40 đơn vị).
-   - xmin và xmax chỉ ôm từ đầu đến cuối dòng chữ đó.
-4. TUYỆT ĐỐI KHÔNG TẠO Ô CHỒNG ĐÈ HOẶC LỒNG NHAU.
-5. Dịch trọn vẹn 100% sang tiếng Việt đầy đủ từng từ, rõ ràng, KHÔNG viết tắt ba chấm (...), KHÔNG cắt xén chữ. Tuyệt đối không chứa chữ Hán trong bản dịch.
+    // Ultra-fast OCR prompt: Nhận diện từng dòng chữ riêng lẻ, vị trí chuẩn 1:1
+    const prompt = `Bạn là hệ thống AR Camera dịch trực tiếp thời gian thực sang tiếng Việt.
+HÃY QUÉT VÀ DỊCH TẤT CẢ VĂN BẢN TRONG HÌNH ẢNH:
+1. Nhận diện các dòng chữ, tiêu đề, đoạn văn bản, biển hiệu hoặc menu có trong hình.
+2. Với mỗi dòng chữ hoặc đoạn văn bản, tạo 1 mục trong mảng 'items':
+   - "box_2d": [ymin, xmin, ymax, xmax] (tọa độ từ 0 đến 1000) ôm đúng vị trí văn bản đó trên ảnh.
+   - "translated_text": Dịch trọn vẹn, tự nhiên sang tiếng Việt, rõ nghĩa 100%, không viết tắt, không cắt bớt chữ. Tuyệt đối không xuất lại chữ Hán hay ký tự gốc.
+   - "category": 'menu' | 'sign' | 'instruction' | 'other'
+3. Nếu ảnh chụp trang báo, tài liệu hay màn hình có nhiều dòng: Dịch lần lượt từng dòng/đoạn từ trên xuống dưới.
+4. "summary_translation": Bản dịch tóm tắt toàn bộ nội dung chính đã nhận diện.
+5. "detected_language": Tên ngôn ngữ nguồn (ví dụ: Tiếng Trung, Tiếng Nhật, Tiếng Anh, v.v.).
 
-Xuất định dạng JSON thuần:
+Xuất định dạng JSON chuẩn:
 {
   "detected_language": "Ngôn ngữ nguồn",
   "summary_translation": "Tóm tắt ngắn gọn",
   "items": [
     {
       "box_2d": [ymin, xmin, ymax, xmax],
-      "translated_text": "Dịch trọn vẹn của đúng dòng chữ này",
+      "translated_text": "Bản dịch tiếng Việt hoàn chỉnh",
       "category": "sign"
     }
   ]
 }`;
 
-    // Multi-model fallback sequence for 100% reliability and fast response
+    // Multi-model sequence: gemini-3.1-flash-lite FIRST for ultra-fast latency (~1s) and active quota
     const candidateModels = [
+      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
       'gemini-3.8-flash',
-      'gemini-2.5-flash',
-      'gemini-3.1-flash-lite',
     ];
 
     let lastError: any = null;
@@ -156,10 +145,9 @@ Xuất định dạng JSON thuần:
         const config: any = {
           systemInstruction: 'Bạn là chuyên gia AR OCR trực tiếp tốc độ cao. Dịch chuẩn xác 100% toàn bộ chữ trong ảnh sang tiếng Việt đầy đủ, rõ nghĩa, không viết tắt, không cắt bớt chữ, không xuất chữ Hán.',
           responseMimeType: 'application/json',
-          maxOutputTokens: 2048,
+          maxOutputTokens: 2500,
         };
 
-        // 9-second timeout per candidate to guarantee real-time turnaround without premature aborts
         const generatePromise = ai.models.generateContent({
           model: modelName,
           contents: {
@@ -177,7 +165,7 @@ Xuất định dạng JSON thuần:
         });
 
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Model timeout')), 9000)
+          setTimeout(() => reject(new Error('Model timeout')), 14000)
         );
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -191,24 +179,10 @@ Xuất định dạng JSON thuần:
     }
 
     if (!resultText) {
-      const isQuota =
-        lastError?.status === 429 ||
-        lastError?.status === 'RESOURCE_EXHAUSTED' ||
-        (lastError?.message && (lastError.message.includes('429') || lastError.message.includes('quota') || lastError.message.includes('RESOURCE_EXHAUSTED')));
-
-      if (isQuota && !isCustomKey) {
-        sharedKeyCooldownUntil = Date.now() + 60000;
-        console.warn('Gemini shared key quota limit reached. Cooldown activated for 60s.');
-      }
-
-      const errMsg = isQuota 
-        ? 'Hệ thống AI dùng chung đã hết 20 lượt miễn phí hôm nay. Ứng dụng đã tự động chuyển sang chế độ từ điển ngoại tuyến.' 
-        : (lastError?.message || 'Máy chủ đang tải cao, vui lòng thử lại sau giây lát');
-
-      return res.status(429).json({
+      const errMsg = lastError?.message || 'Máy chủ đang tải cao, vui lòng thử lại sau giây lát';
+      return res.status(503).json({
         error: errMsg,
-        code: isQuota ? 'QUOTA_EXHAUSTED' : 'SERVICE_UNAVAILABLE',
-        isQuota: Boolean(isQuota),
+        code: 'SERVICE_UNAVAILABLE',
       });
     }
 

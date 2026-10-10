@@ -8,17 +8,22 @@ import {
   Camera,
   Layers,
   ListFilter,
+  ArrowRightLeft,
+  BookOpen,
+  History,
   Sparkles,
   Globe2,
-  AlertCircle,
-  FileText,
-  SlidersHorizontal,
   Volume2,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  Loader2,
+  Radio,
+  FileText,
   X,
-  History,
-  Trash2,
-  Calendar,
-  Tag,
+  DownloadCloud,
+  WifiOff,
+  Key,
 } from 'lucide-react';
 import { CameraView } from './components/CameraView';
 import { AROverlay } from './components/AROverlay';
@@ -26,10 +31,10 @@ import { DetectedItemCard } from './components/DetectedItemCard';
 import { TranslateList } from './components/TranslateList';
 import { CurrencyConverter } from './components/CurrencyConverter';
 import { PhrasebookModal } from './components/PhrasebookModal';
+import { HistoryDrawer } from './components/HistoryDrawer';
 import { TravelAskModal } from './components/TravelAskModal';
 import { OfflinePacksModal } from './components/OfflinePacksModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
-import { ToolsMenuModal } from './components/ToolsMenuModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { speakText } from './utils/audio';
 import { compressImageForOCR } from './utils/imageCompressor';
@@ -43,135 +48,6 @@ import {
   ScanHistoryRecord,
   TravelSample,
 } from './types';
-
-interface HistoryDrawerProps {
-  isOpen: boolean;
-  onClose: () => void;
-  records: ScanHistoryRecord[];
-  onSelectRecord: (record: ScanHistoryRecord) => void;
-  onClearHistory: () => void;
-  onDeleteRecord: (id: string) => void;
-}
-
-export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
-  isOpen,
-  onClose,
-  records,
-  onSelectRecord,
-  onClearHistory,
-  onDeleteRecord,
-}) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[100] flex justify-end bg-black/70 backdrop-blur-sm animate-in fade-in">
-      <div className="w-full max-w-md bg-slate-900 border-l border-slate-800 h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900/95 sticky top-0 z-20 backdrop-blur-md">
-          <div className="flex items-center gap-2 min-w-0">
-            <History className="w-5 h-5 text-emerald-400 shrink-0" />
-            <h3 className="font-bold text-white text-sm sm:text-base truncate">
-              Lịch Sử Quét &amp; Dịch
-            </h3>
-          </div>
-          
-          <div className="flex items-center gap-2 shrink-0">
-            {records.length > 0 && (
-              <button
-                onClick={onClearHistory}
-                className="text-xs font-semibold text-red-300 hover:text-white px-2.5 py-1.5 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-700/80 transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                title="Xóa tất cả lịch sử"
-              >
-                <Trash2 className="w-4 h-4 text-red-400" />
-                <span>Xóa hết</span>
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 transition-colors shrink-0 shadow-xs cursor-pointer"
-              title="Đóng bảng"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {records.length === 0 ? (
-            <div className="h-64 flex flex-col items-center justify-center text-slate-500 space-y-2 text-center">
-              <History className="w-10 h-10 stroke-[1.5]" />
-              <p className="text-sm font-medium">Chưa có ảnh nào được lưu</p>
-              <p className="text-xs text-slate-400 max-w-xs">
-                Mỗi khi bạn dơ camera quét chữ, kết quả dịch sẽ tự động được lưu lại tại đây để bạn tra cứu khi cần.
-              </p>
-            </div>
-          ) : (
-            records.map((rec) => {
-              const dateStr = new Date(rec.timestamp).toLocaleTimeString('vi-VN', {
-                hour: '2-digit',
-                minute: '2-digit',
-                day: '2-digit',
-                month: '2-digit',
-              });
-
-              return (
-                <div
-                  key={rec.id}
-                  onClick={() => {
-                    onSelectRecord(rec);
-                    onClose();
-                  }}
-                  className="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 hover:border-emerald-500/50 rounded-xl p-3 cursor-pointer transition-all flex items-start gap-3 group relative"
-                >
-                  <img
-                    src={rec.imageUrl}
-                    alt="Scan thumbnail"
-                    className="w-16 h-16 rounded-lg object-cover bg-slate-950 border border-slate-700 shrink-0"
-                  />
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-emerald-400 truncate">
-                        {rec.result.detected_language}
-                      </span>
-                      <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                        <Calendar className="w-2.5 h-2.5" />
-                        {dateStr}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-slate-100 line-clamp-3 leading-snug font-medium break-words">
-                      {rec.result.summary_translation}
-                    </p>
-
-                    <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-400">
-                      <span>{rec.result.items.length} từ đã dịch</span>
-                      {rec.result.detected_prices && rec.result.detected_prices.length > 0 && (
-                        <span className="flex items-center gap-0.5 text-cyan-400 font-semibold">
-                          <Tag className="w-3 h-3" />
-                          {rec.result.detected_prices[0].estimated_vnd}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteRecord(rec.id);
-                    }}
-                    className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition-colors shrink-0"
-                    title="Xóa mục này"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const STORAGE_KEY = 'travel_camera_translator_history_v2';
 
@@ -189,13 +65,13 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'ar' | 'list'>('ar');
 
   // Modals & Drawers
-  const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [showPhrasebookModal, setShowPhrasebookModal] = useState(false);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
   const [showAskModal, setShowAskModal] = useState(false);
   const [showOfflineModal, setShowOfflineModal] = useState(false);
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [showSamplesModal, setShowSamplesModal] = useState(false);
   const [hasServerKey, setHasServerKey] = useState<boolean>(true);
   const [isMissingApiKey, setIsMissingApiKey] = useState<boolean>(false);
   const [isQuotaExhausted, setIsQuotaExhausted] = useState<boolean>(false);
@@ -262,6 +138,7 @@ export default function App() {
   isAnalyzingRef.current = isAnalyzing;
   const consecutiveEmptyFrames = useRef(0);
   const activeAbortRef = useRef<AbortController | null>(null);
+  const lastScanTimestamp = useRef(0);
 
   // LIVE TRANSLATION HANDLER: Receives frames continuously without stopping the live camera
   const handleLiveFrame = useCallback(async (frameDataUrl: string, isManualSnap?: boolean) => {
@@ -272,30 +149,34 @@ export default function App() {
       }
       setResult(null); // Clear stale overlay boxes immediately
       consecutiveEmptyFrames.current = 0;
-    } else if (isAnalyzingRef.current) {
-      return; // Skip if already processing a frame
+      setSilentNotice('Đang quét và dịch hình ảnh...');
+    } else {
+      if (isAnalyzingRef.current) return;
+      // Nhịp quét nhanh tức thì: cho phép nhận diện ngay khi vừa lia camera (1.2 giây)
+      if (Date.now() - lastScanTimestamp.current < 1200) return;
     }
 
+    lastScanTimestamp.current = Date.now();
     isAnalyzingRef.current = true;
     setIsAnalyzing(true);
-    setSilentNotice(null);
 
     const abortController = new AbortController();
     activeAbortRef.current = abortController;
-    const abortTimeout = setTimeout(() => abortController.abort(), 6500);
+    // 16-second timeout allows high-res vision OCR to complete without premature aborts
+    const abortTimeout = setTimeout(() => abortController.abort(), 16000);
 
     try {
       // Offline fallback: If device is offline, check offline database
       if (!navigator.onLine) {
-        setSilentNotice(`📶 Đang ngoại tuyến: Vui lòng kết nối Internet để dịch bảng cảnh báo qua AI.`);
+        setSilentNotice(`📶 Đang ngoại tuyến: Vui lòng kết nối Internet để dịch bảng qua AI.`);
         return;
       }
 
-      // Fast image payload: If frame is already under 220KB (from CameraView canvas), send directly without redundant canvas re-decode
+      // Fast image payload
       const compressedImage =
-        frameDataUrl.length < 220000
+        frameDataUrl.length < 320000
           ? frameDataUrl
-          : await compressImageForOCR(frameDataUrl, 840, 0.65);
+          : await compressImageForOCR(frameDataUrl, 960, 0.72);
 
       const userKey = getUserApiKey();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -340,7 +221,7 @@ export default function App() {
           if (!result) {
             const offlineData = translateOfflineSnapshot(undefined, activePackId);
             setResult(offlineData);
-            setSilentNotice('⚡ Gói AI miễn phí dùng chung đã hết lượt. Đang dùng từ điển ngoại tuyến.');
+            setSilentNotice('⚡ Gói AI tạm bận. Đang dùng từ điển ngoại tuyến.');
           } else {
             setSilentNotice(errData.error || 'Đang kết nối lại máy chủ dịch...');
           }
@@ -354,6 +235,7 @@ export default function App() {
 
       setIsMissingApiKey(false);
       setIsQuotaExhausted(false);
+      setSilentNotice(null);
 
       const rawData: VisionTranslationResult = await response.json();
       
@@ -449,88 +331,169 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
-      {/* Clean, Minimalist Header */}
-      <header className="h-14 sm:h-16 bg-slate-900/90 border-b border-slate-800/80 px-3 sm:px-6 flex items-center justify-between shrink-0 z-40 backdrop-blur-md">
+      {/* Top Header Navigation - Compact & sleek */}
+      <header className="h-12 bg-slate-900/90 border-b border-slate-800 px-3 sm:px-4 flex items-center justify-between shrink-0 z-40 backdrop-blur-md">
         {/* App Title & Language Indicator */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-md shadow-emerald-500/20 shrink-0">
-            <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-sm">
+            <Camera className="w-3.5 h-3.5 text-white" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-bold text-xs sm:text-sm text-white tracking-tight">
-                Camera Dịch
+            <div className="flex items-center gap-1.5">
+              <h1 className="font-bold text-xs text-white tracking-tight">
+                Dịch Camera
               </h1>
-              {isAnalyzing ? (
-                <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-1.5 py-0.2 rounded font-mono font-medium animate-pulse">
-                  Đang dịch...
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-[9px] text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.2 rounded font-mono font-bold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  LIVE
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1 text-[11px] text-slate-400">
-              <Globe2 className="w-3 h-3 text-slate-500 shrink-0" />
-              <span className="truncate max-w-[140px] sm:max-w-none">
-                {result ? result.detected_language : 'Tự động phát hiện'} ➔{' '}
-                <strong className="text-emerald-300 font-semibold">Tiếng Việt 🇻🇳</strong>
+              <span className="flex items-center gap-1 text-[9px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-1 py-0.5 rounded font-mono font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                LIVE
               </span>
             </div>
           </div>
         </div>
 
-        {/* Clean Header Actions (Minimalist & Uncluttered) */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Segmented View Mode Toggle (AR vs Danh sách) when results exist */}
-          {result && result.items && result.items.length > 0 && (
-            <div className="flex items-center bg-slate-800/90 border border-slate-700/80 rounded-xl p-0.5 shadow-sm">
+        {/* Action Controls & Travel Tools */}
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 max-w-[72%] sm:max-w-none overflow-x-auto no-scrollbar py-0.5">
+          {/* PWA Install Button */}
+          <PWAInstallButton />
+
+          {/* View mode toggle (AR vs List) when result exists */}
+          {result && (
+            <div className="flex items-center bg-slate-800 border border-slate-700/80 rounded-lg p-0.5 mr-0.5 shrink-0">
               <button
                 onClick={() => setViewMode('ar')}
-                className={`flex items-center gap-1 py-1 px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                className={`flex items-center gap-1 py-1 px-2 rounded-md text-[11px] font-medium transition-colors ${
                   viewMode === 'ar'
-                    ? 'bg-emerald-600 text-white shadow-xs'
+                    ? 'bg-emerald-600 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5" />
+                <Layers className="w-3 h-3" />
                 <span>AR</span>
               </button>
               <button
                 onClick={() => setViewMode('list')}
-                className={`flex items-center gap-1 py-1 px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                className={`flex items-center gap-1 py-1 px-2 rounded-md text-[11px] font-medium transition-colors ${
                   viewMode === 'list'
-                    ? 'bg-emerald-600 text-white shadow-xs'
+                    ? 'bg-emerald-600 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <ListFilter className="w-3.5 h-3.5" />
-                <span>Danh sách ({result.items.length})</span>
+                <ListFilter className="w-3 h-3" />
+                <span>({result.items.length})</span>
               </button>
             </div>
           )}
 
-          {/* Unified Travel Utilities Button (Opens clean menu with all tools) */}
+          {/* Toggle Mask Cover (Che chữ gốc để không bị đè 2 lớp chữ) */}
+          {result && (
+            <button
+              onClick={() => setMaskCoverMode((prev) => !prev)}
+              className={`p-1.5 rounded-lg border text-xs flex items-center transition-colors ${
+                maskCoverMode
+                  ? 'bg-slate-800 border-emerald-500/70 text-emerald-300'
+                  : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white'
+              }`}
+              title={
+                maskCoverMode
+                  ? 'Đang bật nền che chữ gốc'
+                  : 'Đang tắt nền che (chữ nổi trong suốt)'
+              }
+            >
+              <Eye className="w-3.5 h-3.5 text-emerald-400" />
+            </button>
+          )}
+
+          {/* Toggle Full Continuous Paragraph Reader */}
+          {result && result.summary_translation && (
+            <button
+              onClick={() => setShowFullArticle((prev) => !prev)}
+              className={`p-1.5 rounded-lg border text-xs flex items-center transition-colors ${
+                showFullArticle
+                  ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
+                  : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+              }`}
+              title="Đọc toàn bộ bài văn liền mạch"
+            >
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+            </button>
+          )}
+
+          {/* Travel Sample Images Picker */}
           <button
-            onClick={() => setShowToolsMenu(true)}
-            className={`py-1.5 px-3 rounded-xl border text-xs flex items-center gap-1.5 transition-colors cursor-pointer font-medium ${
-              isMissingApiKey
-                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 animate-pulse'
-                : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-200 hover:text-white'
-            }`}
-            title="Mở tiện ích du lịch & công cụ"
+            onClick={() => setShowSamplesModal(true)}
+            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors"
+            title="Thử ảnh mẫu du lịch (Menu, báo, biển hiệu)"
           >
-            <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden xs:inline">Tiện ích</span>
-            {(!isOnline || isMissingApiKey || historyRecords.length > 0) && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            )}
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline text-[11px] font-medium">Mẫu</span>
           </button>
 
-          {/* PWA Install Button (compact) */}
-          <PWAInstallButton />
+          {/* Gemini API Key Settings Button */}
+          <button
+            onClick={() => setShowApiKeyModal(true)}
+            className={`p-1.5 sm:px-2 sm:py-1 rounded-lg border text-xs flex items-center gap-1 transition-colors ${
+              isMissingApiKey
+                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 font-bold animate-pulse'
+                : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+            }`}
+            title="Cài đặt Gemini API Key (cho Vercel / Cá nhân)"
+          >
+            <Key className={`w-3.5 h-3.5 ${isMissingApiKey ? 'text-amber-400' : 'text-emerald-400'}`} />
+            <span className="hidden md:inline text-[11px] font-medium">
+              {isMissingApiKey ? 'Cài Key' : 'Key'}
+            </span>
+          </button>
+
+          {/* Currency Converter Button */}
+          <button
+            onClick={() => setShowCurrencyModal(true)}
+            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors"
+            title="Đổi tiền tệ sang VNĐ"
+          >
+            <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline text-[11px] font-medium">Đổi tiền</span>
+          </button>
+
+          {/* Travel Phrasebook Button */}
+          <button
+            onClick={() => setShowPhrasebookModal(true)}
+            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors"
+            title="Sổ tay giao tiếp nhanh"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline text-[11px] font-medium">Mẫu câu</span>
+          </button>
+
+          {/* Offline Language Packs Manager Button */}
+          <button
+            onClick={() => setShowOfflineModal(true)}
+            className={`p-1.5 sm:px-2 sm:py-1 rounded-lg border text-xs flex items-center gap-1 transition-colors ${
+              !isOnline
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold'
+                : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+            }`}
+            title="Tải & quản lý các gói ngôn ngữ ngoại tuyến"
+          >
+            {!isOnline ? (
+              <WifiOff className="w-3.5 h-3.5 text-amber-400" />
+            ) : (
+              <DownloadCloud className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            <span className="hidden sm:inline text-[11px] font-medium">Offline</span>
+          </button>
+
+          {/* Scan History */}
+          <button
+            onClick={() => setShowHistoryDrawer(true)}
+            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors relative"
+            title="Lịch sử quét"
+          >
+            <History className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline text-[11px] font-medium">Lịch sử</span>
+            {historyRecords.length > 0 && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 absolute top-1 right-1" />
+            )}
+          </button>
         </div>
       </header>
 
@@ -571,11 +534,13 @@ export default function App() {
 
           {/* Transient silent notice if any */}
           {silentNotice && (
-            <div className="absolute top-16 left-4 z-30 pointer-events-none bg-amber-950/80 border border-amber-600/50 rounded-xl px-3 py-1 backdrop-blur-sm text-[11px] text-amber-200 flex items-center gap-1.5 animate-in fade-in">
-              <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+            <div className="absolute top-4 left-4 z-30 pointer-events-none bg-amber-950/85 border border-amber-600/50 rounded-xl px-3 py-1.5 backdrop-blur-sm text-[11px] text-amber-200 flex items-center gap-1.5 animate-in fade-in shadow-lg">
+              <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <span>{silentNotice}</span>
             </div>
           )}
+
+
 
           {/* Selected Item Floating Details Card */}
           {selectedItem && (
@@ -734,24 +699,52 @@ export default function App() {
         />
       )}
 
-      {/* Unified Tools & Travel Utilities Modal */}
-      <ToolsMenuModal
-        isOpen={showToolsMenu}
-        onClose={() => setShowToolsMenu(false)}
-        onOpenCurrency={() => setShowCurrencyModal(true)}
-        onOpenPhrasebook={() => setShowPhrasebookModal(true)}
-        onOpenOfflinePacks={() => setShowOfflineModal(true)}
-        onOpenHistory={() => setShowHistoryDrawer(true)}
-        onOpenApiKey={() => setShowApiKeyModal(true)}
-        isMissingApiKey={isMissingApiKey}
-        isOnline={isOnline}
-        downloadedPacksCount={getDownloadedPacks().length}
-        historyCount={historyRecords.length}
-        maskCoverMode={maskCoverMode}
-        setMaskCoverMode={setMaskCoverMode}
-        hasSummaryTranslation={Boolean(result?.summary_translation)}
-        onOpenSummaryTranslation={() => setShowFullArticle(true)}
-      />
+      {/* Travel Samples Picker Modal */}
+      {showSamplesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-2xl p-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <h3 className="font-bold text-sm text-white">Ảnh mẫu du lịch</h3>
+              </div>
+              <button
+                onClick={() => setShowSamplesModal(false)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              Chọn ảnh mẫu để thử nghiệm tính năng dịch AR mà không cần quét camera thực tế:
+            </p>
+            <div className="space-y-2">
+              {TRAVEL_SAMPLES.map((sample) => (
+                <button
+                  key={sample.id}
+                  onClick={() => {
+                    handleSelectSample(sample);
+                    setShowSamplesModal(false);
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60 hover:border-emerald-500/40 text-left transition group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl">{sample.flag}</span>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-200 group-hover:text-emerald-300 transition">
+                        {sample.title}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {sample.country} • {sample.description}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
