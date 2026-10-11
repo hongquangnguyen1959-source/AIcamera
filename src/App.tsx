@@ -28,6 +28,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { CameraView } from './components/CameraView';
 import { AROverlay } from './components/AROverlay';
@@ -38,6 +39,7 @@ import { PhrasebookModal } from './components/PhrasebookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { TravelAskModal } from './components/TravelAskModal';
 import { OfflinePacksModal } from './components/OfflinePacksModal';
+import { ToolsModal } from './components/ToolsModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { compressImageForOCR } from './utils/imageCompressor';
@@ -66,11 +68,13 @@ export default function App() {
   const [showOverlayText, setShowOverlayText] = useState(true);
   const [maskCoverMode, setMaskCoverMode] = useState(false); // Mặc định không dùng viền/hộp đen để chữ nằm trong suốt tự nhiên
   const [showFullArticle, setShowFullArticle] = useState(false);
+  const [activeTab, setActiveTab] = useState<'photo' | 'live' | 'list'>('photo');
   const [viewMode, setViewMode] = useState<'ar' | 'list'>('ar');
   const [isPhotoSheetExpanded, setIsPhotoSheetExpanded] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
 
   // Modals & Drawers
+  const [showToolsModal, setShowToolsModal] = useState(false);
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [showPhrasebookModal, setShowPhrasebookModal] = useState(false);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
@@ -78,6 +82,7 @@ export default function App() {
   const [showOfflineModal, setShowOfflineModal] = useState(false);
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [showSamplesModal, setShowSamplesModal] = useState(false);
+  const [textSize, setTextSize] = useState<'sm' | 'md' | 'lg'>('sm');
   const [hasServerKey, setHasServerKey] = useState<boolean>(true);
   const [isMissingApiKey, setIsMissingApiKey] = useState<boolean>(false);
   const [isQuotaExhausted, setIsQuotaExhausted] = useState<boolean>(false);
@@ -131,30 +136,52 @@ export default function App() {
     }
   });
 
-  // Save history on change
+  // Save history on change (safely prevent QuotaExceededError)
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(historyRecords.slice(0, 30)));
+      const safeRecords = historyRecords.slice(0, 20).map((r) => ({
+        ...r,
+        imageUrl: r.imageUrl && r.imageUrl.length < 50000 ? r.imageUrl : '',
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(safeRecords));
     } catch (e) {
       console.warn('Storage quota exceeded', e);
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (_) {}
     }
   }, [historyRecords]);
 
   const isAnalyzingRef = useRef(isAnalyzing);
   isAnalyzingRef.current = isAnalyzing;
+  const currentScanIdRef = useRef(0);
   const consecutiveEmptyFrames = useRef(0);
   const activeAbortRef = useRef<AbortController | null>(null);
   const lastScanTimestamp = useRef(0);
 
+  // Safety Watchdog: Auto-reset stuck analyzing state after 10s if network or promise hangs
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const timer = setTimeout(() => {
+      if (isAnalyzingRef.current) {
+        isAnalyzingRef.current = false;
+        setIsAnalyzing(false);
+      }
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [isAnalyzing]);
+
   // LIVE TRANSLATION HANDLER: Receives frames continuously without stopping the live camera
   const handleLiveFrame = useCallback(async (frameDataUrl: string, isManualSnap?: boolean) => {
+    const scanId = ++currentScanIdRef.current;
+
     // If user clicked manual snap, abort pending background frame to prioritize this fresh frame
     if (isManualSnap) {
       if (activeAbortRef.current) {
         activeAbortRef.current.abort();
       }
       consecutiveEmptyFrames.current = 0;
-      setSilentNotice('Đang dịch tức thì...');
+      setSilentNotice('Đang nhận diện & dịch ảnh chụp...');
     } else {
       if (isAnalyzingRef.current) return;
       // Nhịp quét nhanh: cho phép nhận diện tức thì khi camera ổn định
@@ -167,13 +194,20 @@ export default function App() {
 
     const abortController = new AbortController();
     activeAbortRef.current = abortController;
-    // 7.5s timeout prevents any hung request from blocking the app
-    const abortTimeout = setTimeout(() => abortController.abort(), 7500);
+    // 12s timeout for manual snaps, 7.5s for continuous live video frames
+    const timeoutMs = isManualSnap ? 12000 : 7500;
+    const abortTimeout = setTimeout(() => abortController.abort(), timeoutMs);
 
     try {
       // Offline fallback: If device is offline, check offline database
       if (!navigator.onLine) {
-        setSilentNotice(`📶 Đang ngoại tuyến: Vui lòng kết nối Internet để dịch bảng qua AI.`);
+        if (isManualSnap && currentScanIdRef.current === scanId) {
+          const offlineData = translateOfflineSnapshot(undefined, activePackId);
+          setResult(offlineData);
+          setSilentNotice('📶 Ngoại tuyến: Đã dịch bằng gói từ điển.');
+        } else {
+          setSilentNotice(`📶 Đang ngoại tuyến: Vui lòng kết nối Internet để dịch bảng qua AI.`);
+        }
         return;
       }
 
@@ -201,6 +235,8 @@ export default function App() {
         signal: abortController.signal,
       });
 
+      if (currentScanIdRef.current !== scanId && !isManualSnap) return;
+
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         if (response.status === 401 || errData.code === 'MISSING_API_KEY') {
@@ -223,9 +259,11 @@ export default function App() {
             }
           }
 
-          // If manual snap failed, alert user clearly
+          // If manual snap failed, provide instant offline dictionary translation!
           if (isManualSnap) {
-            setSilentNotice('Máy chủ AI bận hoặc hết lượt. Bấm "Thử lại" hoặc dùng gói ngoại tuyến.');
+            const offlineData = translateOfflineSnapshot(undefined, activePackId);
+            setResult(offlineData);
+            setSilentNotice('⚡ AI bận. Đã chuyển sang chế độ từ điển ngoại tuyến.');
           } else if (!result) {
             const offlineData = translateOfflineSnapshot(undefined, activePackId);
             setResult(offlineData);
@@ -235,7 +273,13 @@ export default function App() {
           }
           return;
         } else if (response.status === 500) {
-          setSilentNotice(errData.error || 'Máy chủ AI đang bận. Bấm "Quét ngay" để thử lại.');
+          if (isManualSnap) {
+            const offlineData = translateOfflineSnapshot(undefined, activePackId);
+            setResult(offlineData);
+            setSilentNotice('⚡ Đã chuyển sang từ điển ngoại tuyến.');
+          } else {
+            setSilentNotice(errData.error || 'Máy chủ AI đang bận. Bấm "Quét ngay" để thử lại.');
+          }
           return;
         }
         return;
@@ -247,6 +291,8 @@ export default function App() {
 
       const rawData: VisionTranslationResult = await response.json();
       
+      if (currentScanIdRef.current !== scanId && !isManualSnap) return;
+
       // Safeguard: Ensure translated_text is never empty
       const data: VisionTranslationResult = {
         ...rawData,
@@ -268,7 +314,7 @@ export default function App() {
           consecutiveEmptyFrames.current = 0;
           setResult(data);
           setSilentNotice(null);
-        } else if (data.summary_translation) {
+        } else if (data.summary_translation && !/không\s+(?:có|tìm\s+thấy|phát\s+hiện)\s+văn\s+bản|chưa\s+phát\s+hiện|no\s+text/i.test(data.summary_translation)) {
           consecutiveEmptyFrames.current = 0;
           setResult({
             ...data,
@@ -284,7 +330,7 @@ export default function App() {
         } else {
           // No items detected in this frame (e.g. panned away or no text)
           if (isManualSnap) {
-            setSilentNotice('Không tìm thấy văn bản trong bức ảnh này. Hãy thử chụp gần hơn.');
+            setSilentNotice('Không tìm thấy văn bản rõ ràng trong bức ảnh này. Hãy thử chụp gần hơn.');
           } else if (!staticImageUrl) {
             consecutiveEmptyFrames.current++;
             if (consecutiveEmptyFrames.current >= 6) {
@@ -298,7 +344,7 @@ export default function App() {
           const newRecord: ScanHistoryRecord = {
             id: 'scan_' + Date.now(),
             timestamp: Date.now(),
-            imageUrl: frameDataUrl,
+            imageUrl: frameDataUrl.length > 50000 ? '' : frameDataUrl,
             result: data,
             sourceLang: data.detected_language,
             targetLang: 'Tiếng Việt',
@@ -313,13 +359,26 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      if (err.name !== 'AbortError') {
+      if (err.name === 'AbortError') {
+        if (isManualSnap) {
+          const offlineData = translateOfflineSnapshot(undefined, activePackId);
+          setResult(offlineData);
+          setSilentNotice('⚡ Kết nối AI quá hạn. Đã chuyển sang từ điển ngoại tuyến.');
+        }
+      } else {
         console.warn('Frame processing dropped:', err.message);
+        if (isManualSnap) {
+          const offlineData = translateOfflineSnapshot(undefined, activePackId);
+          setResult(offlineData);
+          setSilentNotice('Đã dịch bằng từ điển ngoại tuyến.');
+        }
       }
     } finally {
       clearTimeout(abortTimeout);
-      isAnalyzingRef.current = false;
-      setIsAnalyzing(false);
+      if (currentScanIdRef.current <= scanId) {
+        isAnalyzingRef.current = false;
+        setIsAnalyzing(false);
+      }
     }
   }, [staticImageUrl, activePackId]);
 
@@ -357,173 +416,95 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
-      {/* Top Header Navigation - Compact & sleek */}
-      <header className="h-12 bg-slate-900/90 border-b border-slate-800 px-3 sm:px-4 flex items-center justify-between shrink-0 z-40 backdrop-blur-md">
-        {/* App Title & Language Indicator */}
+      {/* Single Ultra-Clean Header Bar */}
+      <header className="h-12 bg-slate-900 border-b border-slate-800 px-3 sm:px-4 flex items-center justify-between shrink-0 z-40">
+        {/* Left: App Brand & Language */}
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-sm">
-            <Camera className="w-3.5 h-3.5 text-white" />
+          <div className="w-7 h-7 rounded-lg bg-emerald-500 flex items-center justify-center text-slate-950 shadow-sm shrink-0">
+            <Camera className="w-4 h-4 text-slate-950" />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h1 className="font-bold text-xs text-white tracking-tight">
-                Dịch Camera
-              </h1>
-              {staticImageUrl ? (
-                <span className="flex items-center gap-1 text-[9px] text-sky-300 bg-sky-950/90 border border-sky-700/80 px-1 py-0.5 rounded font-mono font-bold shadow-sm">
-                  ẢNH ĐÃ CHỤP
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-[9px] text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-1 py-0.5 rounded font-mono font-bold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  LIVE
-                </span>
-              )}
-            </div>
-          </div>
+          <span className="font-bold text-xs text-white tracking-tight hidden xs:inline">
+            Dịch Camera
+          </span>
+          <span className="text-[11px] font-semibold text-emerald-400 bg-slate-950 border border-slate-800 px-2 py-0.5 rounded-full">
+            {result?.detected_language ? `${result.detected_language} ➔ VN` : 'Tự động ➔ Tiếng Việt'}
+          </span>
         </div>
 
-        {/* Action Controls & Travel Tools */}
-        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 max-w-[72%] sm:max-w-none overflow-x-auto no-scrollbar py-0.5">
-          {/* PWA Install Button */}
-          <PWAInstallButton />
+        {/* Center: Mode Pill Toggle */}
+        <div className="flex items-center bg-slate-950 p-1 rounded-full border border-slate-800 shadow-inner">
+          <button
+            onClick={() => {
+              setActiveTab('photo');
+              setIsLiveTranslating(false);
+              if (viewMode === 'list') setViewMode('ar');
+            }}
+            className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
+              activeTab === 'photo'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Chụp Ảnh
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('live');
+              setStaticImageUrl(null);
+              setIsLiveTranslating(true);
+              if (viewMode === 'list') setViewMode('ar');
+            }}
+            className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
+              activeTab === 'live'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            AR Live
+          </button>
+        </div>
 
-          {/* View mode toggle (AR vs List) when result exists */}
-          {result && (
-            <div className="flex items-center bg-slate-800 border border-slate-700/80 rounded-lg p-0.5 mr-0.5 shrink-0">
-              <button
-                onClick={() => setViewMode('ar')}
-                className={`flex items-center gap-1 py-1 px-2 rounded-md text-[11px] font-medium transition-colors ${
-                  viewMode === 'ar'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Layers className="w-3 h-3" />
-                <span>AR</span>
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`flex items-center gap-1 py-1 px-2 rounded-md text-[11px] font-medium transition-colors ${
-                  viewMode === 'list'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <ListFilter className="w-3 h-3" />
-                <span>({result.items.length})</span>
-              </button>
-            </div>
-          )}
+        {/* Right: Actions & Tools */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Font Size Quick Toggle Button */}
+          <button
+            onClick={() => {
+              setTextSize((prev) => (prev === 'sm' ? 'md' : prev === 'md' ? 'lg' : 'sm'));
+            }}
+            className="px-2 py-1 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 hover:text-emerald-200 transition cursor-pointer flex items-center gap-1 shadow-xs"
+            title="Bấm để chuyển cỡ chữ dịch: Nhỏ / Vừa / To"
+          >
+            <span>Chữ: {textSize === 'sm' ? 'Nhỏ 🔤' : textSize === 'md' ? 'Vừa 🔤' : 'To 🔤'}</span>
+          </button>
 
-          {/* Toggle Mask Cover (Che chữ gốc để không bị đè 2 lớp chữ) */}
+          {/* List View Toggle Button when results exist */}
           {result && (
             <button
-              onClick={() => setMaskCoverMode((prev) => !prev)}
-              className={`p-1.5 rounded-lg border text-xs flex items-center transition-colors ${
-                maskCoverMode
-                  ? 'bg-slate-800 border-emerald-500/70 text-emerald-300'
-                  : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white'
+              onClick={() => {
+                const nextMode = viewMode === 'ar' ? 'list' : 'ar';
+                setViewMode(nextMode);
+                if (nextMode === 'list') setActiveTab('list');
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors flex items-center gap-1 ${
+                viewMode === 'list'
+                  ? 'bg-emerald-600 border-emerald-500 text-white'
+                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
               }`}
-              title={
-                maskCoverMode
-                  ? 'Đang bật nền che chữ gốc'
-                  : 'Đang tắt nền che (chữ nổi trong suốt)'
-              }
             >
-              <Eye className="w-3.5 h-3.5 text-emerald-400" />
+              <ListFilter className="w-3.5 h-3.5" />
+              <span>Danh sách ({result.items?.length || 0})</span>
             </button>
           )}
 
-          {/* Toggle Full Continuous Paragraph Reader */}
-          {result && result.summary_translation && (
-            <button
-              onClick={() => setShowFullArticle((prev) => !prev)}
-              className={`p-1.5 rounded-lg border text-xs flex items-center transition-colors ${
-                showFullArticle
-                  ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
-                  : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-              }`}
-              title="Đọc toàn bộ bài văn liền mạch"
-            >
-              <FileText className="w-3.5 h-3.5 text-emerald-400" />
-            </button>
-          )}
-
-          {/* Travel Sample Images Picker */}
+          {/* Tools Menu Trigger */}
           <button
-            onClick={() => setShowSamplesModal(true)}
-            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors"
-            title="Thử ảnh mẫu du lịch (Menu, báo, biển hiệu)"
+            onClick={() => setShowToolsModal(true)}
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition cursor-pointer relative"
+            title="Công cụ bổ sung"
           >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline text-[11px] font-medium">Mẫu</span>
-          </button>
-
-          {/* Gemini API Key Settings Button */}
-          <button
-            onClick={() => setShowApiKeyModal(true)}
-            className={`p-1.5 sm:px-2 sm:py-1 rounded-lg border text-xs flex items-center gap-1 transition-colors ${
-              isMissingApiKey
-                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300 font-bold animate-pulse'
-                : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-            }`}
-            title="Cài đặt Gemini API Key (cho Vercel / Cá nhân)"
-          >
-            <Key className={`w-3.5 h-3.5 ${isMissingApiKey ? 'text-amber-400' : 'text-emerald-400'}`} />
-            <span className="hidden md:inline text-[11px] font-medium">
-              {isMissingApiKey ? 'Cài Key' : 'Key'}
-            </span>
-          </button>
-
-          {/* Currency Converter Button */}
-          <button
-            onClick={() => setShowCurrencyModal(true)}
-            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors"
-            title="Đổi tiền tệ sang VNĐ"
-          >
-            <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="hidden sm:inline text-[11px] font-medium">Đổi tiền</span>
-          </button>
-
-          {/* Travel Phrasebook Button */}
-          <button
-            onClick={() => setShowPhrasebookModal(true)}
-            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors"
-            title="Sổ tay giao tiếp nhanh"
-          >
-            <BookOpen className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline text-[11px] font-medium">Mẫu câu</span>
-          </button>
-
-          {/* Offline Language Packs Manager Button */}
-          <button
-            onClick={() => setShowOfflineModal(true)}
-            className={`p-1.5 sm:px-2 sm:py-1 rounded-lg border text-xs flex items-center gap-1 transition-colors ${
-              !isOnline
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold'
-                : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
-            }`}
-            title="Tải & quản lý các gói ngôn ngữ ngoại tuyến"
-          >
-            {!isOnline ? (
-              <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-            ) : (
-              <DownloadCloud className="w-3.5 h-3.5 text-emerald-400" />
-            )}
-            <span className="hidden sm:inline text-[11px] font-medium">Offline</span>
-          </button>
-
-          {/* Scan History */}
-          <button
-            onClick={() => setShowHistoryDrawer(true)}
-            className="p-1.5 sm:px-2 sm:py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs flex items-center gap-1 transition-colors relative"
-            title="Lịch sử quét"
-          >
-            <History className="w-3.5 h-3.5 text-purple-400" />
-            <span className="hidden sm:inline text-[11px] font-medium">Lịch sử</span>
-            {historyRecords.length > 0 && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 absolute top-1 right-1" />
+            <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
+            {isMissingApiKey && (
+              <span className="w-2 h-2 rounded-full bg-amber-400 absolute top-0.5 right-0.5 animate-ping" />
             )}
           </button>
         </div>
@@ -531,7 +512,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 relative flex flex-col md:flex-row overflow-hidden">
-        {/* Viewport: Camera is ALWAYS LIVE and moving, with AR overlay rendered directly on top */}
+        {/* Viewport: Camera / Photo View with AR overlay */}
         <div className={`relative flex-1 h-full overflow-hidden ${
           viewMode === 'list' && result ? 'hidden md:block md:w-1/2' : 'w-full'
         }`}>
@@ -552,6 +533,7 @@ export default function App() {
             isMissingApiKey={isMissingApiKey}
             isQuotaExhausted={isQuotaExhausted}
             onOpenApiKeyModal={() => setShowApiKeyModal(true)}
+            activeTab={activeTab}
           >
             {/* AR Text Overlay rendered directly on top of the live video or static image */}
             {result && (
@@ -561,6 +543,7 @@ export default function App() {
                 onSelectItem={(item) => setSelectedItem(item)}
                 showOverlayText={showOverlayText}
                 maskCoverMode={maskCoverMode}
+                textSize={textSize}
               />
             )}
           </CameraView>
@@ -575,122 +558,9 @@ export default function App() {
 
 
 
-          {/* Selected Item Floating Details Card */}
-          {selectedItem && (
-            <DetectedItemCard
-              item={selectedItem}
-              onClose={() => setSelectedItem(null)}
-              onAskAboutItem={(item) => {
-                setSelectedItem(item);
-                setShowAskModal(true);
-              }}
-              detectedLang={result?.detected_language}
-            />
-          )}
+          {/* Selected Item Floating Details Card - Removed to prevent obstructing the translated photo view */}
 
-          {/* Photo Translation Results Sheet / Card when viewing captured or static image */}
-          {staticImageUrl && result && (result.items?.length > 0 || result.summary_translation) && !showFullArticle && (
-            <div className={`absolute inset-x-3 bottom-18 sm:inset-x-8 sm:bottom-20 z-35 bg-slate-950/95 border border-emerald-500/60 rounded-2xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden transition-all duration-300 animate-in fade-in slide-in-from-bottom-2 ${
-              isPhotoSheetExpanded ? 'max-h-[55vh]' : 'max-h-[145px]'
-            }`}>
-              {/* Header Bar */}
-              <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800/80 shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <span className="text-xs font-bold text-white truncate">
-                    {result.detected_language ? `${result.detected_language} ➔ Tiếng Việt` : 'Bản dịch ảnh chụp'}
-                  </span>
-                  <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded-full font-mono font-semibold shrink-0">
-                    {result.items?.length || 1} đoạn
-                  </span>
-                </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {/* TTS Button */}
-                  <button
-                    onClick={() => {
-                      const textToRead = result.items?.map((i) => i.translated_text).join('. ') || result.summary_translation;
-                      speakText(textToRead, 'vi');
-                    }}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 transition"
-                    title="Nghe đọc tiếng Việt"
-                  >
-                    <Volume2 className="w-3.5 h-3.5" />
-                  </button>
-
-                  {/* Copy Button */}
-                  <button
-                    onClick={() => {
-                      const textToCopy = result.items?.map((i) => i.translated_text).join('\n') || result.summary_translation;
-                      navigator.clipboard.writeText(textToCopy);
-                      setCopiedAll(true);
-                      setTimeout(() => setCopiedAll(false), 2000);
-                    }}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
-                    title="Sao chép toàn bộ bản dịch"
-                  >
-                    {copiedAll ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-
-                  {/* Toggle Overlay Button */}
-                  <button
-                    onClick={() => setShowOverlayText(!showOverlayText)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
-                    title={showOverlayText ? 'Ẩn chữ đè lên ảnh' : 'Hiện chữ đè lên ảnh'}
-                  >
-                    {showOverlayText ? <Eye className="w-3.5 h-3.5 text-amber-300" /> : <EyeOff className="w-3.5 h-3.5 text-slate-400" />}
-                  </button>
-
-                  {/* Expand/Collapse Button */}
-                  <button
-                    onClick={() => setIsPhotoSheetExpanded(!isPhotoSheetExpanded)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
-                    title={isPhotoSheetExpanded ? 'Thu gọn' : 'Xem toàn bộ'}
-                  >
-                    {isPhotoSheetExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Items List */}
-              <div className="flex-1 overflow-y-auto p-3 space-y-2 text-xs">
-                {result.items && result.items.length > 0 ? (
-                  result.items.map((it, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => setSelectedItem(it)}
-                      className={`p-2 rounded-xl border transition cursor-pointer ${
-                        selectedItem === it
-                          ? 'bg-emerald-950/60 border-emerald-400 text-white shadow-sm'
-                          : 'bg-slate-900/60 border-slate-800 text-slate-200 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="font-bold text-white text-xs leading-snug">{it.translated_text}</p>
-                          {it.original_text && (
-                            <p className="text-[11px] text-slate-400 mt-0.5 truncate">{it.original_text}</p>
-                          )}
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            speakText(it.translated_text, 'vi');
-                          }}
-                          className="p-1 text-slate-400 hover:text-emerald-300 shrink-0"
-                          title="Đọc câu này"
-                        >
-                          <Volume2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-slate-300 leading-relaxed whitespace-pre-line">{result.summary_translation}</p>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* Full Continuous Article Reader Overlay */}
           {showFullArticle && result?.summary_translation && (
@@ -758,6 +628,21 @@ export default function App() {
       </main>
 
       {/* Modals */}
+      {/* Central Tools & Travel Modal */}
+      <ToolsModal
+        isOpen={showToolsModal}
+        onClose={() => setShowToolsModal(false)}
+        onOpenApiKey={() => setShowApiKeyModal(true)}
+        onOpenOffline={() => setShowOfflineModal(true)}
+        onOpenCurrency={() => setShowCurrencyModal(true)}
+        onOpenPhrasebook={() => setShowPhrasebookModal(true)}
+        onOpenHistory={() => setShowHistoryDrawer(true)}
+        onOpenSamples={() => setShowSamplesModal(true)}
+        isMissingApiKey={isMissingApiKey}
+        isOnline={isOnline}
+        historyCount={historyRecords.length}
+      />
+
       {showCurrencyModal && (
         <CurrencyConverter
           onClose={() => setShowCurrencyModal(false)}

@@ -8,15 +8,21 @@ export async function compressImageForOCR(
   maxDimension = 960,
   quality = 0.72
 ): Promise<string> {
-  // If dataUrl is small already (< 250KB), return immediately without redundant canvas decode
-  if (dataUrl.length < 250000) {
+  // If dataUrl is small already (< 400KB) and not SVG, return immediately without redundant canvas decode
+  if (dataUrl.length < 400000 && !dataUrl.startsWith('data:image/svg')) {
     return dataUrl;
   }
 
   return new Promise((resolve) => {
+    // 3-second safety watchdog so promise never hangs
+    const safetyTimer = setTimeout(() => {
+      resolve(dataUrl);
+    }, 3000);
+
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      clearTimeout(safetyTimer);
       try {
         const origW = img.naturalWidth || img.width;
         const origH = img.naturalHeight || img.height;
@@ -27,8 +33,8 @@ export async function compressImageForOCR(
         }
 
         const scale = Math.min(1, maxDimension / Math.max(origW, origH));
-        const targetW = Math.round(origW * scale);
-        const targetH = Math.round(origH * scale);
+        const targetW = Math.max(1, Math.round(origW * scale));
+        const targetH = Math.max(1, Math.round(origH * scale));
 
         const canvas = document.createElement('canvas');
         canvas.width = targetW;
@@ -52,7 +58,10 @@ export async function compressImageForOCR(
         resolve(dataUrl);
       }
     };
-    img.onerror = () => resolve(dataUrl);
+    img.onerror = () => {
+      clearTimeout(safetyTimer);
+      resolve(dataUrl);
+    };
     img.src = dataUrl;
   });
 }

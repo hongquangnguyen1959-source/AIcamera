@@ -19,6 +19,7 @@ import {
 import { TRAVEL_SAMPLES } from '../data/travelSamples';
 import { POPULAR_LANGUAGE_PACKS } from '../data/offlineLanguagePacksData';
 import { TravelSample } from '../types';
+import { compressImageForOCR } from '../utils/imageCompressor';
 
 interface CameraViewProps {
   onLiveFrame: (imageDataUrl: string, isManualSnap?: boolean) => void;
@@ -37,6 +38,7 @@ interface CameraViewProps {
   isMissingApiKey?: boolean;
   isQuotaExhausted?: boolean;
   onOpenApiKeyModal?: () => void;
+  activeTab?: 'photo' | 'live' | 'list';
   children?: React.ReactNode;
 }
 
@@ -57,6 +59,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
   isMissingApiKey = false,
   isQuotaExhausted = false,
   onOpenApiKeyModal,
+  activeTab = 'photo',
   children,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -193,14 +196,26 @@ export const CameraView: React.FC<CameraViewProps> = ({
   }, [startCamera]);
 
   useEffect(() => {
-    if (!staticImageUrl) {
-      startCamera();
-    }
+    startCamera();
 
     return () => {
       stopExistingStream();
     };
-  }, [facingMode, staticImageUrl, startCamera, stopExistingStream]);
+  }, [facingMode, startCamera, stopExistingStream]);
+
+  // When staticImageUrl is shown, pause camera decoding to conserve CPU/battery; resume when returning
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (staticImageUrl) {
+      video.pause();
+    } else {
+      if (video.paused && streamRef.current) {
+        video.play().catch(() => {});
+      }
+    }
+  }, [staticImageUrl]);
 
   // Hardware watchdog: Auto-detect if video playback gets stalled/frozen by browser
   useEffect(() => {
@@ -285,27 +300,32 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (!video || !cameraReady) return null;
     if (video.videoWidth === 0 || video.videoHeight === 0) return null;
 
-    if (!canvasRef.current) {
-      canvasRef.current = document.createElement('canvas');
+    try {
+      if (!canvasRef.current) {
+        canvasRef.current = document.createElement('canvas');
+      }
+      const canvas = canvasRef.current;
+      // 640px tối ưu hóa chuẩn thị giác: dung lượng ~25KB siêu nhẹ, AI nhận diện tức thì trong <1s
+      const maxDim = 640;
+      const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+      const targetW = Math.round(video.videoWidth * scale);
+      const targetH = Math.round(video.videoHeight * scale);
+
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
+
+      ctx.drawImage(video, 0, 0, targetW, targetH);
+      // 0.60 JPEG: Nhẹ ~25KB, truyền siêu tốc trong 15ms qua mạng
+      return canvas.toDataURL('image/jpeg', 0.60);
+    } catch (err) {
+      console.warn('captureFrame canvas error:', err);
+      return null;
     }
-    const canvas = canvasRef.current;
-    // 640px tối ưu hóa chuẩn thị giác: dung lượng ~25KB siêu nhẹ, AI nhận diện tức thì trong <1s
-    const maxDim = 640;
-    const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
-    const targetW = Math.round(video.videoWidth * scale);
-    const targetH = Math.round(video.videoHeight * scale);
-
-    if (canvas.width !== targetW || canvas.height !== targetH) {
-      canvas.width = targetW;
-      canvas.height = targetH;
-    }
-
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
-
-    ctx.drawImage(video, 0, 0, targetW, targetH);
-    // 0.60 JPEG: Nhẹ ~25KB, truyền siêu tốc trong 15ms qua mạng
-    return canvas.toDataURL('image/jpeg', 0.60);
   }, [cameraReady, staticImageUrl]);
 
   // High-resolution photo capture for dedicated photo translation
@@ -374,10 +394,12 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const dataUrl = event.target?.result as string;
       if (dataUrl) {
-        onCapturePhoto(dataUrl);
+        // Compress high-res phone camera photo to prevent browser memory hang
+        const compressed = await compressImageForOCR(dataUrl, 1280, 0.80);
+        onCapturePhoto(compressed);
       }
     };
     reader.readAsDataURL(file);
@@ -477,10 +499,12 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const dataUrl = event.target?.result as string;
       if (dataUrl) {
-        onCapturePhoto(dataUrl);
+        // Compress uploaded photo to prevent browser memory hang
+        const compressed = await compressImageForOCR(dataUrl, 1280, 0.80);
+        onCapturePhoto(compressed);
       }
     };
     reader.readAsDataURL(file);
@@ -519,165 +543,117 @@ export const CameraView: React.FC<CameraViewProps> = ({
           <div className="absolute inset-0 bg-white/80 pointer-events-none z-50 transition-opacity duration-200" />
         )}
 
-        {/* Missing API Key helper banner */}
-        {isMissingApiKey && !staticImageUrl && (
-          <div className="absolute top-14 inset-x-3 sm:inset-x-8 max-w-md mx-auto z-30 bg-slate-950/95 border border-amber-500/60 rounded-2xl p-3 shadow-2xl backdrop-blur-md text-slate-100 flex items-start gap-2.5 pointer-events-auto animate-in fade-in">
-            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div className="flex-1 text-xs">
-              <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                Chưa có Gemini API Key trên Vercel
-              </div>
-              <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                Camera đang tự động dịch bằng gói ngoại tuyến <strong>{activePack.shortName}</strong>. Để dịch AI trực tuyến đa ngôn ngữ, hãy nhập Key miễn phí:
-              </p>
-              <div className="flex flex-wrap items-center gap-2 mt-2">
-                {onOpenApiKeyModal && (
-                  <button
-                    onClick={onOpenApiKeyModal}
-                    className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg font-bold text-[11px] shadow-sm flex items-center gap-1 transition"
-                  >
-                    <Key className="w-3 h-3" />
-                    <span>Nhập Key miễn phí (30s)</span>
-                  </button>
-                )}
-                {onOpenOfflinePacks && (
-                  <button
-                    onClick={onOpenOfflinePacks}
-                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] border border-slate-700 transition"
-                  >
-                    <span>Quản lý gói ngoại tuyến</span>
-                  </button>
-                )}
-              </div>
-            </div>
+        {/* Discreet API Key / Quota warning pill if needed */}
+        {(isMissingApiKey || isQuotaExhausted) && !staticImageUrl && (
+          <div className="absolute top-3 inset-x-4 z-30 pointer-events-auto flex justify-center">
+            <button
+              onClick={onOpenApiKeyModal}
+              className="bg-amber-950/90 border border-amber-500/60 px-3 py-1 rounded-full shadow-lg backdrop-blur-md flex items-center gap-1.5 text-[11px] font-semibold text-amber-200 hover:text-white transition"
+            >
+              <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>Chế độ Ngoại tuyến — Nhấn để nhập Key AI miễn phí</span>
+            </button>
           </div>
         )}
 
-        {/* Quota limit helper banner */}
-        {!isMissingApiKey && isQuotaExhausted && !staticImageUrl && (
-          <div className="absolute top-14 inset-x-3 sm:inset-x-8 max-w-md mx-auto z-30 bg-slate-950/95 border border-amber-500/60 rounded-2xl p-3 shadow-2xl backdrop-blur-md text-slate-100 flex items-start gap-2.5 pointer-events-auto animate-in fade-in">
-            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div className="flex-1 text-xs">
-              <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                AI dùng chung đã hết 20 lượt miễn phí hôm nay
-              </div>
-              <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
-                Ứng dụng đang dịch bằng gói từ điển <strong>{activePack.shortName}</strong>. Bạn có thể dán Gemini API Key miễn phí từ Google AI Studio để tiếp tục dùng AI tốc độ cao:
-              </p>
-              <div className="flex flex-wrap items-center gap-2 mt-2">
-                {onOpenApiKeyModal && (
-                  <button
-                    onClick={onOpenApiKeyModal}
-                    className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg font-bold text-[11px] shadow-sm flex items-center gap-1 transition"
-                  >
-                    <Key className="w-3 h-3" />
-                    <span>Nhập Key riêng (30s)</span>
-                  </button>
-                )}
-                {onOpenOfflinePacks && (
-                  <button
-                    onClick={onOpenOfflinePacks}
-                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] border border-slate-700 transition"
-                  >
-                    <span>Đổi gói ngoại tuyến</span>
-                  </button>
-                )}
-              </div>
+        {/* CONTINUOUS LIVE CAMERA STREAM: Kept permanently in DOM so stream & decoder never drop */}
+        <div
+          className={`relative flex items-center justify-center max-w-full max-h-full overflow-hidden ${
+            staticImageUrl ? 'hidden' : ''
+          }`}
+          style={
+            videoBoxStyle.width
+              ? videoBoxStyle
+              : videoAspect
+              ? { aspectRatio: `${videoAspect}` }
+              : { width: '100%', height: '100%' }
+          }
+        >
+          <video
+            ref={videoRef}
+            playsInline
+            autoPlay
+            muted
+            onLoadedMetadata={updateVideoBox}
+            onCanPlay={updateVideoBox}
+            className={`w-full h-full block object-fill ${
+              facingMode === 'user' ? 'scale-x-[-1]' : ''
+            }`}
+          />
+
+          {/* Viewfinder Target Reticle / Corner brackets */}
+          <div className="absolute inset-6 sm:inset-14 pointer-events-none flex flex-col justify-between">
+            <div className="flex justify-between">
+              <div className="w-7 h-7 border-t-2 border-l-2 border-emerald-400 rounded-tl-lg shadow-sm" />
+              <div className="w-7 h-7 border-t-2 border-r-2 border-emerald-400 rounded-tr-lg shadow-sm" />
+            </div>
+            <div className="flex justify-between">
+              <div className="w-7 h-7 border-b-2 border-l-2 border-emerald-400 rounded-bl-lg shadow-sm" />
+              <div className="w-7 h-7 border-b-2 border-r-2 border-emerald-400 rounded-br-lg shadow-sm" />
             </div>
           </div>
-        )}
-        {staticImageUrl ? (
-          // Static Preset / Captured Photo Mode: shrinkwrap wrapper guarantees exact coordinate alignment
-          <div className="relative inline-flex items-center justify-center max-w-full max-h-full">
-            <img
-              src={staticImageUrl}
-              alt="Scanned frame"
-              className="max-w-full max-h-full w-auto h-auto block select-none object-contain"
-            />
-            {/* AR Overlay rendered directly on top of the image */}
+
+          {/* Real-time laser scanning line during live analysis */}
+          {isLiveTranslating && !staticImageUrl && (
+            <div className="absolute inset-x-6 sm:inset-x-14 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-pulse pointer-events-none top-1/2 -translate-y-1/2" />
+          )}
+
+          {/* AR Overlay rendered directly on top of the live video */}
+          {!staticImageUrl && (
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
               {children}
             </div>
+          )}
+        </div>
 
-            {/* Active AI Scanning animation over photo */}
-            {isAnalyzing && (
-              <>
-                <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_20px_#10b981] animate-pulse pointer-events-none top-1/2 -translate-y-1/2 z-30" />
-                <div className="absolute top-4 inset-x-0 flex justify-center z-40 pointer-events-none px-4">
-                  <div className="bg-slate-900/95 border border-emerald-500/80 px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 backdrop-blur-md animate-pulse">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                    <span className="text-xs font-bold text-emerald-200">Đang nhận diện &amp; dịch ảnh chụp bằng AI...</span>
+        {/* STATIC PRESET / CAPTURED PHOTO VIEW */}
+        {staticImageUrl && (
+          <div className="relative w-full h-full flex flex-col items-center justify-start overflow-y-auto pt-2 pb-28 px-2">
+            <div className="relative inline-flex items-center justify-center max-w-full max-h-[calc(100vh-8.5rem)] my-auto shadow-2xl rounded-xl border border-slate-800/80 overflow-hidden shrink-0">
+              <img
+                src={staticImageUrl}
+                alt="Scanned frame"
+                className="max-w-full max-h-[calc(100vh-8.5rem)] w-auto h-auto block select-none object-contain"
+              />
+              {/* AR Overlay rendered directly on top of the image */}
+              <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                {children}
+              </div>
+
+              {/* Active AI Scanning animation over photo */}
+              {isAnalyzing && (
+                <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                  <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_20px_#10b981] animate-pulse top-1/2 -translate-y-1/2 z-30" />
+                  <div className="absolute top-4 inset-x-0 flex justify-center z-40 px-4">
+                    <div className="bg-slate-900/95 border border-emerald-500/80 px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 backdrop-blur-md animate-pulse">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                      <span className="text-xs font-bold text-emerald-200">Đang nhận diện &amp; dịch ảnh chụp bằng AI...</span>
+                    </div>
                   </div>
                 </div>
-              </>
-            )}
+              )}
 
-            {/* No text detected helper when scan completes with 0 items */}
-            {!isAnalyzing && detectedCount === 0 && (
-              <div className="absolute bottom-20 inset-x-4 max-w-sm mx-auto z-30 bg-slate-950/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md text-center pointer-events-auto">
-                <p className="text-xs text-slate-200 font-semibold">Chưa phát hiện văn bản rõ ràng trong ảnh này</p>
-                <p className="text-[11px] text-slate-400 mt-1">Gợi ý: Hãy chụp gần hơn vào dòng chữ, giữ thẳng góc và nơi có đủ ánh sáng.</p>
-                <div className="flex items-center justify-center gap-2 mt-3">
-                  <button
-                    onClick={onClearStaticImage}
-                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md transition"
-                  >
-                    Mở Camera chụp lại
-                  </button>
-                  <button
-                    onClick={() => onLiveFrame(staticImageUrl, true)}
-                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition"
-                  >
-                    Thử quét lại
-                  </button>
+              {/* No text detected helper when scan completes with 0 items */}
+              {!isAnalyzing && detectedCount === 0 && (
+                <div className="absolute bottom-6 inset-x-4 max-w-sm mx-auto z-30 bg-slate-950/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md text-center pointer-events-auto">
+                  <p className="text-xs text-slate-200 font-semibold">Chưa phát hiện văn bản rõ ràng trong ảnh này</p>
+                  <p className="text-[11px] text-slate-400 mt-1">Gợi ý: Hãy chụp gần hơn vào dòng chữ, giữ thẳng góc và nơi có đủ ánh sáng.</p>
+                  <div className="flex items-center justify-center gap-2 mt-3">
+                    <button
+                      onClick={onClearStaticImage}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
+                    >
+                      Mở Camera chụp lại
+                    </button>
+                    <button
+                      onClick={() => onLiveFrame(staticImageUrl, true)}
+                      className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition cursor-pointer"
+                    >
+                      Thử quét lại
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          // CONTINUOUS LIVE CAMERA STREAM: Wrapper matches exact aspect ratio of video frame
-          <div
-            className="relative flex items-center justify-center max-w-full max-h-full overflow-hidden"
-            style={
-              videoBoxStyle.width
-                ? videoBoxStyle
-                : videoAspect
-                ? { aspectRatio: `${videoAspect}` }
-                : { width: '100%', height: '100%' }
-            }
-          >
-            <video
-              ref={videoRef}
-              playsInline
-              autoPlay
-              muted
-              onLoadedMetadata={updateVideoBox}
-              onCanPlay={updateVideoBox}
-              className={`w-full h-full block object-fill ${
-                facingMode === 'user' ? 'scale-x-[-1]' : ''
-              }`}
-            />
-
-            {/* Viewfinder Target Reticle / Corner brackets */}
-            <div className="absolute inset-6 sm:inset-14 pointer-events-none flex flex-col justify-between">
-              <div className="flex justify-between">
-                <div className="w-7 h-7 border-t-2 border-l-2 border-emerald-400 rounded-tl-lg shadow-sm" />
-                <div className="w-7 h-7 border-t-2 border-r-2 border-emerald-400 rounded-tr-lg shadow-sm" />
-              </div>
-              <div className="flex justify-between">
-                <div className="w-7 h-7 border-b-2 border-l-2 border-emerald-400 rounded-bl-lg shadow-sm" />
-                <div className="w-7 h-7 border-b-2 border-r-2 border-emerald-400 rounded-br-lg shadow-sm" />
-              </div>
-            </div>
-
-            {/* Real-time laser scanning line during live analysis */}
-            {isLiveTranslating && (
-              <div className="absolute inset-x-6 sm:inset-x-14 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-pulse pointer-events-none top-1/2 -translate-y-1/2" />
-            )}
-
-            {/* AR Overlay rendered directly on top of the live video */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              {children}
+              )}
             </div>
           </div>
         )}

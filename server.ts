@@ -88,6 +88,10 @@ app.post('/api/translate-vision', async (req, res) => {
       if (match) {
         mimeType = match[1];
       }
+      // Gemini inlineData only supports image/jpeg, image/png, image/webp, image/heic, image/heif
+      if (!mimeType.startsWith('image/') || mimeType.includes('svg')) {
+        mimeType = 'image/jpeg';
+      }
       const rawPayload = parts[1];
       if (parts[0].includes('base64')) {
         base64Data = rawPayload;
@@ -105,15 +109,15 @@ app.post('/api/translate-vision', async (req, res) => {
       return res.json(cached.data);
     }
 
-    // Ultra-fast OCR prompt: Khớp chính xác tọa độ chữ và dịch tức thì sang tiếng Việt
-    const prompt = `AR OCR: Xác định tọa độ box_2d [ymin, xmin, ymax, xmax] (thang 0-1000) khớp chính xác vị trí từng dòng/cụm chữ trong ảnh (tiếng Trung, Anh, Nhật...). Dịch toàn bộ sang tiếng Việt tự nhiên, rõ nghĩa dạng JSON:
+    // Ultra-fast AR OCR prompt: Khớp vị trí bố trí logic từng khối văn bản/đoạn văn
+    const prompt = `AR OCR: Xác định tọa độ khung chữ box_2d [ymin, xmin, ymax, xmax] (thang 0-1000) gom nhóm nguyên từng khối văn bản/tiêu đề liền mạch theo đúng thứ tự đọc tự nhiên (từ trên xuống dưới, từ trái sang phải). Mỗi đoạn văn hoặc câu hoàn chỉnh chỉ dùng 1 box_2d duy nhất gói gọn toàn bộ đoạn đó, không chia nhỏ thành nhiều dòng vụn vặt làm rối bố trí. Dịch từng khối văn bản sang tiếng Việt chuẩn xác dạng JSON:
 {
-  "detected_language": "Ngôn ngữ nguồn",
-  "summary_translation": "Bản dịch tóm tắt",
+  "detected_language": "Ngôn ngữ nguồn (ví dụ: Tiếng Anh, Trung Quốc, Nhật Bản...)",
+  "summary_translation": "Bản dịch toàn bộ văn bản liền mạch (dịch đầy đủ 100% tất cả các đoạn từ trên xuống dưới)",
   "items": [
     {
       "box_2d": [ymin, xmin, ymax, xmax],
-      "translated_text": "Bản dịch tiếng Việt tương ứng",
+      "translated_text": "Bản dịch tiếng Việt hoàn chỉnh của khối/đoạn văn này",
       "category": "sign"
     }
   ]
@@ -133,9 +137,9 @@ app.post('/api/translate-vision', async (req, res) => {
     for (const modelName of candidateModels) {
       try {
         const config: any = {
-          systemInstruction: 'AR OCR: Dịch chuẩn xác toàn bộ chữ trong ảnh sang tiếng Việt đầy đủ, rõ nghĩa, không viết tắt, tọa độ box_2d khớp đúng vị trí chữ gốc.',
+          systemInstruction: 'AR OCR: Dịch chuẩn xác ĐẦY ĐỦ 100% TOÀN BỘ nội dung chữ trong ảnh sang tiếng Việt, tuyệt đối KHÔNG BỎ SÓT bất kỳ đoạn hay dòng văn bản nào. Tọa độ box_2d khớp đúng vị trí chữ gốc.',
           responseMimeType: 'application/json',
-          maxOutputTokens: 1200,
+          maxOutputTokens: 4096,
         };
 
         const generatePromise = ai.models.generateContent({
@@ -296,8 +300,9 @@ app.post('/api/translate-vision', async (req, res) => {
       summary = summary.replace(chineseRegex, '').trim();
     }
 
-    // If no individual line items were detected but summary exists, create a readable fallback item
-    if (normalizedItems.length === 0 && summary.length > 0) {
+    // If no individual line items were detected but a genuine summary exists, create a readable fallback item
+    const isNoTextSummary = /không\s+(?:có|tìm\s+thấy|phát\s+hiện)\s+văn\s+bản|chưa\s+phát\s+hiện|no\s+text/i.test(summary);
+    if (normalizedItems.length === 0 && summary.length > 0 && !isNoTextSummary) {
       normalizedItems.push({
         box_2d: [350, 100, 480, 900],
         translated_text: summary,

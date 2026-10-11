@@ -9,6 +9,7 @@ interface AROverlayProps {
   showOverlayText?: boolean;
   maskCoverMode?: boolean;
   langCode?: string;
+  textSize?: 'sm' | 'md' | 'lg';
 }
 
 // Strip CJK ideographs / Chinese characters strictly
@@ -25,123 +26,152 @@ function cleanVerboseText(text: string): string {
 
 interface PositionedItem {
   item: DetectedItem;
-  top: number;
-  left: number;
-  width: number;
-  height: number;
+  top: number; // percentage 0-100
+  left: number; // percentage 0-100
+  width: number; // percentage 0-100
+  height: number; // percentage 0-100
   text: string;
-}
-
-// Check area overlap between two 0-1000 coordinate boxes
-function isOverlappingOrNested(boxA: number[], boxB: number[]): boolean {
-  const [y1Min, x1Min, y1Max, x1Max] = boxA;
-  const [y2Min, x2Min, y2Max, x2Max] = boxB;
-
-  const interYMin = Math.max(y1Min, y2Min);
-  const interXMin = Math.max(x1Min, x2Min);
-  const interYMax = Math.min(y1Max, y2Max);
-  const interXMax = Math.min(x1Max, x2Max);
-
-  if (interYMax <= interYMin || interXMax <= interXMin) {
-    return false;
-  }
-
-  const interArea = (interYMax - interYMin) * (interXMax - interXMin);
-  const areaA = Math.max(1, (y1Max - y1Min) * (x1Max - x1Min));
-  const areaB = Math.max(1, (y2Max - y2Min) * (x2Max - x2Min));
-  const minArea = Math.min(areaA, areaB);
-
-  // If > 30% of the smaller box overlaps -> duplicate or nested macro container
-  return interArea / minArea > 0.3;
 }
 
 function normalizeTextForComparison(text: string): string {
   return (text || '').toLowerCase().replace(/[\s,.;:!?_()\-–—"']/g, '');
 }
 
-// Layout engine that places translated text directly over corresponding original text
+// Check if two horizontal ranges [leftA, leftA+widthA] and [leftB, leftB+widthB] overlap significantly
+function hasHorizontalOverlap(
+  leftA: number,
+  widthA: number,
+  leftB: number,
+  widthB: number
+): boolean {
+  const rightA = leftA + widthA;
+  const rightB = leftB + widthB;
+  const overlapLeft = Math.max(leftA, leftB);
+  const overlapRight = Math.min(rightA, rightB);
+  const overlapWidth = overlapRight - overlapLeft;
+
+  if (overlapWidth <= 0) return false;
+
+  const minBoxWidth = Math.min(widthA, widthB);
+  return (overlapWidth / minBoxWidth) > 0.20 || overlapWidth > 3.5;
+}
+
+// 1:1 Precise Layout Engine with per-column vertical anti-collision
 function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] {
   if (!rawItems || rawItems.length === 0) return [];
 
-  const validEntries: { item: DetectedItem; box: number[]; text: string; norm: string; area: number }[] = [];
+  const validEntries: {
+    item: DetectedItem;
+    ymin: number;
+    xmin: number;
+    ymax: number;
+    xmax: number;
+    text: string;
+    norm: string;
+  }[] = [];
 
   for (const rawItem of rawItems) {
     if (!rawItem.box_2d || rawItem.box_2d.length < 4 || !rawItem.translated_text) continue;
     const cleanText = cleanVerboseText(rawItem.translated_text);
-    if (!cleanText) continue;
+    if (!cleanText || cleanText.length < 1) continue;
 
     const norm = normalizeTextForComparison(cleanText);
     if (norm.length === 0) continue;
 
     const [ymin, xmin, ymax, xmax] = rawItem.box_2d;
-    const area = (ymax - ymin) * (xmax - xmin);
     validEntries.push({
       item: { ...rawItem, translated_text: cleanText },
-      box: rawItem.box_2d,
+      ymin,
+      xmin,
+      ymax,
+      xmax,
       text: cleanText,
       norm,
-      area,
     });
   }
 
-  // Deduplicate exact repeats
+  // Filter out duplicate text items occupying virtually the same spatial position
   const filtered: typeof validEntries = [];
   for (const entry of validEntries) {
-    const isDuplicate = filtered.some(
-      (accepted) =>
-        accepted.norm === entry.norm &&
-        Math.abs(accepted.box[0] - entry.box[0]) < 40 &&
-        Math.abs(accepted.box[1] - entry.box[1]) < 40
-    );
+    const isDuplicate = filtered.some((accepted) => {
+      if (accepted.norm === entry.norm) return true;
+      const cyA = (accepted.ymin + accepted.ymax) / 2;
+      const cyB = (entry.ymin + entry.ymax) / 2;
+      const cxA = (accepted.xmin + accepted.xmax) / 2;
+      const cxB = (entry.xmin + entry.xmax) / 2;
+      if (Math.abs(cyA - cyB) < 25 && Math.abs(cxA - cxB) < 40 && accepted.norm === entry.norm) {
+        return true;
+      }
+      return false;
+    });
+
     if (!isDuplicate) {
       filtered.push(entry);
     }
   }
 
-  // Position items closely matching the detected bounding box of the source words
-  const placed: PositionedItem[] = [];
+  // Sort items strictly top-to-bottom by ymin
+  filtered.sort((a, b) => a.ymin - b.ymin);
+
+  // Position items with column-aware vertical collision avoidance
+  const positioned: PositionedItem[] = [];
 
   for (const entry of filtered) {
-    const [ymin, xmin, ymax, xmax] = entry.box;
-    const origTop = ymin / 10;
-    const origLeft = xmin / 10;
-    const origH = Math.max(2.2, (ymax - ymin) / 10);
-    const origW = Math.max(4.0, (xmax - xmin) / 10);
-    const centerX = origLeft + origW / 2;
+    const desiredLeft = Math.max(0.2, Math.min(94, entry.xmin / 10));
+    const rawW = Math.max(12.0, (entry.xmax - entry.xmin) / 10);
+    const width = Math.min(99.5 - desiredLeft, rawW);
 
-    // Expand width moderately if the original text was very short (e.g. 2-3 CJK chars)
-    // but keep it tightly anchored around centerX
-    const neededW = Math.min(
-      75,
-      Math.max(origW, Math.min(entry.text.length * 1.4, origW * 1.35 + 3))
-    );
-    const left = Math.max(0.5, Math.min(99.5 - neededW, centerX - neededW / 2));
-    const top = Math.max(0.5, Math.min(99.5 - origH, origTop));
+    // Dynamic height calculation based on text length to prevent text overflow
+    const approxLines = Math.max(1, Math.ceil(entry.text.length / Math.max(12, Math.floor(width * 0.9))));
+    const calculatedHeight = Math.max((entry.ymax - entry.ymin) / 10, approxLines * 2.4);
+    const height = Math.max(2.2, Math.min(35, calculatedHeight));
 
-    placed.push({
+    let top = Math.max(0.2, Math.min(96, entry.ymin / 10));
+
+    // Collision check: find maximum bottom edge among placed items that horizontally overlap
+    let maxOverlappingBottom = 0;
+    for (const placed of positioned) {
+      if (hasHorizontalOverlap(desiredLeft, width, placed.left, placed.width)) {
+        const pBottom = placed.top + placed.height;
+        if (pBottom > maxOverlappingBottom) {
+          maxOverlappingBottom = pBottom;
+        }
+      }
+    }
+
+    if (maxOverlappingBottom > 0 && top < maxOverlappingBottom + 0.4) {
+      top = Math.min(95, maxOverlappingBottom + 0.5);
+    }
+
+    positioned.push({
       item: entry.item,
       top,
-      left,
-      width: neededW,
-      height: origH,
+      left: desiredLeft,
+      width,
+      height,
       text: entry.text,
     });
   }
 
-  return placed;
+  return positioned;
 }
 
-// Calculate responsive font size so text is crisp and readable
-function getResponsiveFontSize(charCount: number, boxWidthPercent: number): string {
-  const density = charCount / Math.max(8, boxWidthPercent);
-  if (charCount <= 8) {
-    return '0.90rem';
-  } else if (charCount <= 20 && density < 0.6) {
-    return '0.82rem';
-  } else if (charCount <= 40 || density < 1.0) {
-    return '0.74rem';
+// Dynamic compact font size matching text length & chosen textSize scale
+function getResponsiveFontSize(textLength: number, textSizeScale: 'sm' | 'md' | 'lg' = 'sm'): string {
+  if (textSizeScale === 'sm') {
+    if (textLength > 180) return '0.58rem'; // ~9.2px compact
+    if (textLength > 100) return '0.62rem'; // ~9.9px
+    if (textLength > 40) return '0.66rem'; // ~10.5px
+    return '0.70rem'; // ~11.2px
   }
-  return '0.68rem';
+  if (textSizeScale === 'md') {
+    if (textLength > 180) return '0.65rem'; // ~10.4px
+    if (textLength > 100) return '0.70rem'; // ~11.2px
+    return '0.75rem'; // ~12px
+  }
+  // 'lg' scale
+  if (textLength > 180) return '0.74rem'; // ~11.8px
+  return '0.82rem'; // ~13.1px
 }
 
 export const AROverlay: React.FC<AROverlayProps> = ({
@@ -150,7 +180,7 @@ export const AROverlay: React.FC<AROverlayProps> = ({
   onSelectItem,
   overlayMode = 'replace',
   showOverlayText,
-  maskCoverMode = false,
+  textSize = 'sm',
 }) => {
   if (!items || items.length === 0 || overlayMode === 'hidden') return null;
 
@@ -161,48 +191,36 @@ export const AROverlay: React.FC<AROverlayProps> = ({
     <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
       {layoutItems.map(({ item, top, left, width, height, text }, index) => {
         const isSelected = selectedItem === item;
-        const fontSize = getResponsiveFontSize(text.length, width);
+        const fontSize = getResponsiveFontSize(text.length, textSize);
 
         return (
           <div
-            key={`ar-${text.slice(0, 25)}-${index}`}
+            key={`ar-${text.slice(0, 15)}-${index}`}
             style={{
               top: `${top}%`,
               left: `${left}%`,
               width: `${width}%`,
               minHeight: `${height}%`,
-              transition: 'top 0.15s ease-out, left 0.15s ease-out',
             }}
             onClick={(e) => {
               e.stopPropagation();
               onSelectItem(item);
             }}
-            className={`absolute pointer-events-auto cursor-pointer flex items-center justify-center ${
-              isSelected ? 'scale-[1.03] z-30' : 'z-20'
+            className={`absolute pointer-events-auto cursor-pointer flex flex-col justify-start items-start ${
+              isSelected ? 'scale-[1.01] z-30' : 'z-20'
             }`}
-            title={`Dịch: ${text}`}
+            title={`Bấm để chọn bản dịch: ${text}`}
           >
             {isTextVisible ? (
               <div
-                className={`w-full flex items-center justify-center text-center transition-all ${
+                className={`w-full h-full transition-all overflow-y-auto rounded-md p-1 sm:p-1.5 text-left break-words shadow-sm ${
                   isSelected
-                    ? 'bg-amber-400 text-slate-950 font-black shadow-xl ring-2 ring-amber-300 rounded px-1.5 py-0.5 z-30'
-                    : maskCoverMode
-                    ? 'bg-slate-950/90 border border-amber-400/40 text-amber-200 rounded px-1.5 py-0.5 shadow-md'
-                    : 'bg-slate-950/85 border border-emerald-400/60 text-emerald-200 font-bold rounded px-1.5 py-0.5 shadow-lg backdrop-blur-xs'
+                    ? 'bg-amber-400/90 text-slate-950 font-bold ring-2 ring-amber-300 z-30'
+                    : 'bg-slate-950/60 backdrop-blur-[2px] border border-emerald-400/35 text-emerald-100 font-medium hover:bg-slate-950/80 z-20'
                 }`}
-                style={{ fontSize, lineHeight: '1.2' }}
+                style={{ fontSize, lineHeight: '1.28' }}
               >
-                <span
-                  style={{
-                    textShadow: isSelected
-                      ? 'none'
-                      : '0 1px 2px rgba(0,0,0,0.9)',
-                  }}
-                  className="font-bold select-none whitespace-normal break-words leading-tight max-w-full text-center tracking-tight"
-                >
-                  {text}
-                </span>
+                {text}
               </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center">
@@ -215,3 +233,4 @@ export const AROverlay: React.FC<AROverlayProps> = ({
     </div>
   );
 };
+
