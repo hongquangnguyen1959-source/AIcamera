@@ -66,7 +66,7 @@ export default function App() {
 
   const [selectedItem, setSelectedItem] = useState<DetectedItem | null>(null);
   const [showOverlayText, setShowOverlayText] = useState(true);
-  const [maskCoverMode, setMaskCoverMode] = useState(false); // Mặc định không dùng viền/hộp đen để chữ nằm trong suốt tự nhiên
+  const [maskCoverMode, setMaskCoverMode] = useState(true); // Mặc định bật hộp nền mờ tương phản cao để chữ không bị chìm/đè lên chữ gốc
   const [showFullArticle, setShowFullArticle] = useState(false);
   const [activeTab, setActiveTab] = useState<'photo' | 'live' | 'list'>('photo');
   const [viewMode, setViewMode] = useState<'ar' | 'list'>('ar');
@@ -194,8 +194,8 @@ export default function App() {
 
     const abortController = new AbortController();
     activeAbortRef.current = abortController;
-    // 12s timeout for manual snaps, 7.5s for continuous live video frames
-    const timeoutMs = isManualSnap ? 12000 : 7500;
+    // 25s timeout for manual snaps, 10s for continuous live video frames
+    const timeoutMs = isManualSnap ? 25000 : 10000;
     const abortTimeout = setTimeout(() => abortController.abort(), timeoutMs);
 
     try {
@@ -211,10 +211,12 @@ export default function App() {
         return;
       }
 
-      // Fast image payload: for manual photo snap, keep high resolution (1080px) for sharp OCR
-      const compressedImage = isManualSnap
+      // Fast image payload: ensure SVGs and high-res manual photo snaps are properly rasterized to JPEG
+      const compressedImage = frameDataUrl.startsWith('data:image/svg')
         ? await compressImageForOCR(frameDataUrl, 1080, 0.85)
-        : frameDataUrl.length < 250000 || frameDataUrl.startsWith('data:image/svg')
+        : isManualSnap
+        ? await compressImageForOCR(frameDataUrl, 1080, 0.85)
+        : frameDataUrl.length < 250000
         ? frameDataUrl
         : await compressImageForOCR(frameDataUrl, 720, 0.65);
 
@@ -259,29 +261,14 @@ export default function App() {
             }
           }
 
-          // If manual snap failed, provide instant offline dictionary translation!
-          if (isManualSnap) {
-            const offlineData = translateOfflineSnapshot(undefined, activePackId);
-            setResult(offlineData);
-            setSilentNotice('⚡ AI bận. Đã chuyển sang chế độ từ điển ngoại tuyến.');
-          } else if (!result) {
-            const offlineData = translateOfflineSnapshot(undefined, activePackId);
-            setResult(offlineData);
-            setSilentNotice('⚡ Gói AI tạm bận. Đang dùng từ điển ngoại tuyến.');
-          } else {
-            setSilentNotice(errData.error || 'Đang kết nối lại máy chủ dịch...');
-          }
+          const noticeMsg = errData.error || (response.status === 429 ? 'Hạn ngạch AI đang bận. Bấm "Dịch lại" để quét lại.' : 'Máy chủ AI tạm bận. Bấm "Dịch lại" để quét lại.');
+          setSilentNotice(`⚠️ ${noticeMsg}`);
           return;
         } else if (response.status === 500) {
-          if (isManualSnap) {
-            const offlineData = translateOfflineSnapshot(undefined, activePackId);
-            setResult(offlineData);
-            setSilentNotice('⚡ Đã chuyển sang từ điển ngoại tuyến.');
-          } else {
-            setSilentNotice(errData.error || 'Máy chủ AI đang bận. Bấm "Quét ngay" để thử lại.');
-          }
+          setSilentNotice(errData.error || 'Máy chủ AI đang bận. Bấm "Dịch lại" để thử lại.');
           return;
         }
+        setSilentNotice(errData.error || 'Lỗi kết nối máy chủ dịch.');
         return;
       }
 
@@ -361,16 +348,12 @@ export default function App() {
     } catch (err: any) {
       if (err.name === 'AbortError') {
         if (isManualSnap) {
-          const offlineData = translateOfflineSnapshot(undefined, activePackId);
-          setResult(offlineData);
-          setSilentNotice('⚡ Kết nối AI quá hạn. Đã chuyển sang từ điển ngoại tuyến.');
+          setSilentNotice('⏱️ Quá thời gian chờ máy chủ. Vui lòng bấm "Dịch lại" để quét lại.');
         }
       } else {
         console.warn('Frame processing dropped:', err.message);
         if (isManualSnap) {
-          const offlineData = translateOfflineSnapshot(undefined, activePackId);
-          setResult(offlineData);
-          setSilentNotice('Đã dịch bằng từ điển ngoại tuyến.');
+          setSilentNotice('⚠️ Quá trình nhận diện bị gián đoạn. Vui lòng bấm "Dịch lại".');
         }
       }
     } finally {
@@ -474,7 +457,22 @@ export default function App() {
             className="px-2 py-1 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 hover:text-emerald-200 transition cursor-pointer flex items-center gap-1 shadow-xs"
             title="Bấm để chuyển cỡ chữ dịch: Nhỏ / Vừa / To"
           >
-            <span>Chữ: {textSize === 'sm' ? 'Nhỏ 🔤' : textSize === 'md' ? 'Vừa 🔤' : 'To 🔤'}</span>
+            <span>{textSize === 'sm' ? 'Chữ Nhỏ 🔤' : textSize === 'md' ? 'Chữ Vừa 🔤' : 'Chữ To 🔤'}</span>
+          </button>
+
+          {/* Backdrop Mode Toggle Button */}
+          <button
+            onClick={() => {
+              setMaskCoverMode((prev) => !prev);
+            }}
+            className={`px-2 py-1 rounded-lg text-xs font-bold border transition cursor-pointer flex items-center gap-1 shadow-xs ${
+              maskCoverMode
+                ? 'bg-slate-800 border-emerald-500/60 text-emerald-300 hover:text-emerald-200'
+                : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white'
+            }`}
+            title="Bật/Tắt hộp nền mờ che chữ gốc để không bị đè chữ"
+          >
+            <span>{maskCoverMode ? 'Hộp nền 🔲' : 'Trong suốt 🪟'}</span>
           </button>
 
           {/* List View Toggle Button when results exist */}

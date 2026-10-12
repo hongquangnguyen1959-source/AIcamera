@@ -109,26 +109,47 @@ app.post('/api/translate-vision', async (req, res) => {
       return res.json(cached.data);
     }
 
-    // Ultra-fast AR OCR prompt: Khớp vị trí bố trí logic từng khối văn bản/đoạn văn
-    const prompt = `AR OCR: Xác định tọa độ khung chữ box_2d [ymin, xmin, ymax, xmax] (thang 0-1000) gom nhóm nguyên từng khối văn bản/tiêu đề liền mạch theo đúng thứ tự đọc tự nhiên (từ trên xuống dưới, từ trái sang phải). Mỗi đoạn văn hoặc câu hoàn chỉnh chỉ dùng 1 box_2d duy nhất gói gọn toàn bộ đoạn đó, không chia nhỏ thành nhiều dòng vụn vặt làm rối bố trí. Dịch từng khối văn bản sang tiếng Việt chuẩn xác dạng JSON:
+    // Ultra-fast AR OCR prompt: Yêu cầu bắt buộc dịch 100% sang tiếng Việt chuẩn xác, sát nghĩa và tự nhiên
+    const prompt = `YÊU CẦU BẮT BUỘC: DỊCH 100% TOÀN BỘ VĂN BẢN TRONG ẢNH SANG TIẾNG VIỆT (VIETNAMESE).
+MỌI câu, đoạn văn, tiêu đề trong ảnh PHẢI ĐƯỢC DỊCH SANG TIẾNG VIỆT HOÀN TOÀN trong trường "translated_text".
+TUYỆT ĐỐI KHÔNG ĐƯỢC GIỮ NGUYÊN TIẾNG TRUNG, TIẾNG ANH HOẶC BẤT KỲ NGÔN NGỮ NƯỚC NGOÀI NÀO!
+
+TIÊU CHUẨN DỊCH SÁT NGHĨA & TỰ NHIÊN:
+1. DỊCH CHUẨN VĂN PHONG BÁO CHÍ & ĐỜI SỐNG:
+   - Dịch trôi chảy, tự nhiên, diễn đạt gãy gọn theo văn phong tiếng Việt hiện đại (như bản tin báo Tuổi Trẻ, VnExpress, BBC Tiếng Việt).
+   - Tuyệt đối KHÔNG dịch máy móc từng từ (word-by-word) hoặc dùng từ Hán-Việt cổ ngô nghê.
+   - Ví dụ:
+     + "抓壮丁" -> dịch là "cưỡng bức đi lính" hoặc "bắt lính", TUYỆT ĐỐI KHÔNG dịch là "bắt tráng đinh".
+     + "规避石油出口制裁" -> dịch là "lách lệnh trừng phạt xuất khẩu dầu".
+     + "恶性循环" -> dịch là "vòng xoáy luẩn quẩn".
+     + "防空武器" -> dịch là "vũ khí phòng không" (không nhầm thành "không đối không").
+2. TÁCH BIỆT TIÊU ĐỀ VÀ THỜI GIAN/NGÀY THÁNG:
+   - Ngày tháng, mốc thời gian (ví dụ: "2026年10月12日", "4小时前", "5 giờ trước") nếu nằm dưới hoặc bên cạnh tiêu đề thì PHẢI TÁCH RIÊNG thành khối thời gian hoặc để ở cuối câu.
+   - TUYỆT ĐỐI KHÔNG ghép ngày tháng xen vào giữa câu hay giữa tiêu đề làm méo mó câu chữ (ví dụ lỗi: "lách lệnh 2026 năm 1012 khẩu dầu" là lỗi nghiêm trọng do chèn ngày tháng vào giữa, câu đúng phải là "lách lệnh trừng phạt xuất khẩu dầu").
+3. BỐ CỤC KHUNG CHỮ CHÍNH XÁC & KHÔNG ĐÈ LÊN NHAU (box_2d [ymin, xmin, ymax, xmax] thang 0-1000):
+   - Khung chữ box_2d phải khớp chính xác 1:1 với vị trí tương ứng của khối chữ đó trên hình ảnh.
+   - TUYỆT ĐỐI KHÔNG ĐỂ CHỮ NẰM ĐÈ LÊN NHAU: Mỗi dòng chữ, tiêu đề, hoặc đoạn văn chỉ thuộc về 1 item duy nhất. Các box_2d theo chiều dọc (ymin -> ymax) và chiều ngang (xmin -> xmax) phải tách biệt rõ ràng, không trùng lấn, không chồng chéo lên nhau.
+   - Gom nguyên vẹn từng tiêu đề hoặc đoạn văn hoàn chỉnh vào 1 box_2d duy nhất.
+   - ĐỘ RỘNG KHUNG CHỮ (xmax): Đối với các đoạn văn bài viết, tiêu đề trải dài ngang trang (như trang báo, tài liệu): Tọa độ xmax PHẢI BAO TRỌN toàn bộ chiều ngang của dòng chữ (từ lề trái xmin đến lề phải xmax ~920-960). Tuyệt đối không thu hẹp xmax khiến văn bản bị co cụm về một góc trái mà phải trải đều theo dòng chữ gốc. Đối với bảng, cột chữ hoặc biển hiệu có nhiều cột thì giữ đúng tọa độ từng cột.
+
+Trả về định dạng JSON chuẩn:
 {
-  "detected_language": "Ngôn ngữ nguồn (ví dụ: Tiếng Anh, Trung Quốc, Nhật Bản...)",
-  "summary_translation": "Bản dịch toàn bộ văn bản liền mạch (dịch đầy đủ 100% tất cả các đoạn từ trên xuống dưới)",
+  "detected_language": "Tiếng Trung",
+  "summary_translation": "Bản dịch tiếng Việt trọn vẹn toàn bộ bài/nội dung từ trên xuống dưới",
   "items": [
     {
       "box_2d": [ymin, xmin, ymax, xmax],
-      "translated_text": "Bản dịch tiếng Việt hoàn chỉnh của khối/đoạn văn này",
+      "translated_text": "BẢN DỊCH TIẾNG VIỆT CHUẨN XÁC, SÁT NGHĨA, TỰ NHIÊN",
       "category": "sign"
     }
   ]
 }`;
 
-    // Multi-model sequence: prioritize active models with verified quota and sub-second latency
+    // Multi-model sequence: prioritize gemini-3.5-flash-lite for instant, high-quota multimodal vision translation
     const candidateModels = [
-      'gemini-flash-lite-latest',
       'gemini-3.5-flash-lite',
+      'gemini-flash-latest',
       'gemini-3-flash-preview',
-      'gemini-2.5-flash',
     ];
 
     let lastError: any = null;
@@ -137,7 +158,7 @@ app.post('/api/translate-vision', async (req, res) => {
     for (const modelName of candidateModels) {
       try {
         const config: any = {
-          systemInstruction: 'AR OCR: Dịch chuẩn xác ĐẦY ĐỦ 100% TOÀN BỘ nội dung chữ trong ảnh sang tiếng Việt, tuyệt đối KHÔNG BỎ SÓT bất kỳ đoạn hay dòng văn bản nào. Tọa độ box_2d khớp đúng vị trí chữ gốc.',
+          systemInstruction: 'BẠN LÀ CHUYÊN GIA DỊCH THUẬT TIẾNG VIỆT HÀNG ĐẦU. NHIỆM VỤ: Dịch 100% văn bản trong ảnh sang TIẾNG VIỆT chuẩn xác, sát nghĩa và tự nhiên nhất. Diễn đạt mượt mà, gãy gọn theo văn phong tiếng Việt hiện đại, tránh dịch thô cứng máy móc, tránh dùng từ Hán-Việt cổ ngô nghê. Tách biệt ngày tháng, giờ đăng ra khỏi tiêu đề, tuyệt đối không để ngày tháng chen ngang vào giữa câu.',
           responseMimeType: 'application/json',
           maxOutputTokens: 4096,
         };
@@ -158,9 +179,9 @@ app.post('/api/translate-vision', async (req, res) => {
           config,
         });
 
-        // 7.5s model timeout accommodates high-resolution photos and mobile connections
+        // 9s model timeout accommodates high-resolution photos and mobile connections
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Model timeout')), 7500)
+          setTimeout(() => reject(new Error('Model timeout')), 9000)
         );
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -174,7 +195,17 @@ app.post('/api/translate-vision', async (req, res) => {
     }
 
     if (!resultText) {
-      const errMsg = lastError?.message || 'Máy chủ đang tải cao, vui lòng thử lại sau giây lát';
+      let errMsg = 'Máy chủ đang tải cao, vui lòng thử lại sau giây lát';
+      if (lastError?.message) {
+        try {
+          const parsedErr = JSON.parse(lastError.message);
+          if (parsedErr?.error?.message) {
+            errMsg = parsedErr.error.message;
+          }
+        } catch {
+          errMsg = lastError.message;
+        }
+      }
       return res.status(503).json({
         error: errMsg,
         code: 'SERVICE_UNAVAILABLE',
@@ -293,17 +324,139 @@ app.post('/api/translate-vision', async (req, res) => {
           category: item.category || 'sign',
         };
       })
-      .filter(Boolean);
+      .filter((it): it is { box_2d: number[]; translated_text: string; category: string } => Boolean(it));
+
+    // Server-side robust deduplication: Eliminate duplicate readings, substrings, and overlapping ghost boxes
+    const deduplicatedItems: any[] = [];
+    const sortedRaw = [...normalizedItems].sort((a, b) => b.translated_text.length - a.translated_text.length);
+
+    for (const entry of sortedRaw) {
+      if (!entry) continue;
+      const isRedundant = deduplicatedItems.some((accepted: any) => {
+        // 1. Text exact or substring check
+        const textA = accepted.translated_text.toLowerCase().replace(/[\s,.;:!?_()\-–—"']/g, '');
+        const textB = entry.translated_text.toLowerCase().replace(/[\s,.;:!?_()\-–—"']/g, '');
+        if (textA === textB) return true;
+        if (textA.includes(textB) && textB.length > 12) return true;
+
+        // Word overlap (Jaccard similarity)
+        const wordsA = new Set<string>(accepted.translated_text.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2));
+        const wordsB = new Set<string>(entry.translated_text.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2));
+        if (wordsA.size > 0 && wordsB.size > 0) {
+          let common = 0;
+          for (const w of wordsA) {
+            if (wordsB.has(w)) common++;
+          }
+          const sim = common / Math.min(wordsA.size, wordsB.size);
+          // If 50% or more key words are identical and vertical position is close (<160 units): it is duplicate!
+          if (sim >= 0.50 && Math.abs(accepted.box_2d[0] - entry.box_2d[0]) < 160) {
+            return true;
+          }
+        }
+
+        // 2. Spatial overlap check
+        const [yminA, xminA, ymaxA, xmaxA] = accepted.box_2d;
+        const [yminB, xminB, ymaxB, xmaxB] = entry.box_2d;
+        const intYmin = Math.max(yminA, yminB);
+        const intXmin = Math.max(xminA, xminB);
+        const intYmax = Math.min(ymaxA, ymaxB);
+        const intXmax = Math.min(xmaxA, xmaxB);
+
+        if (intYmax > intYmin && intXmax > intXmin) {
+          const intArea = (intYmax - intYmin) * (intXmax - intXmin);
+          const areaB = Math.max(1, (ymaxB - yminB) * (xmaxB - xminB));
+          if (intArea / areaB > 0.35) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (!isRedundant) {
+        deduplicatedItems.push(entry);
+      }
+    }
+
+    // Sort back to top-to-bottom reading order
+    deduplicatedItems.sort((a: any, b: any) => a.box_2d[0] - b.box_2d[0]);
 
     let summary = parsed?.summary_translation || parsed?.summary || '';
     if (typeof summary === 'string') {
       summary = summary.replace(chineseRegex, '').trim();
     }
 
+    // Safety Verification: If target is Vietnamese ('vi') and items contain untranslated English text
+    const VIETNAMESE_ACCENT_REGEX = /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i;
+    const ENGLISH_WORD_REGEX = /\b(the|is|in|of|and|to|a|for|what|this|with|not|are|from|verb|entry|word|meaning|etymology|see|first|published|more|programme|revision|borrowing|earliest|known|use)\b/i;
+
+    const untranslatedItems = deduplicatedItems.filter(
+      (it: any) =>
+        it.translated_text &&
+        it.translated_text.length > 3 &&
+        !VIETNAMESE_ACCENT_REGEX.test(it.translated_text) &&
+        ENGLISH_WORD_REGEX.test(it.translated_text)
+    );
+
+    if (untranslatedItems.length > 0) {
+      try {
+        const textsToTranslate = untranslatedItems.map((it: any) => it.translated_text);
+        const rescuePrompt = `Dịch danh sách các câu tiếng Anh/nước ngoài sau sang tiếng Việt chuẩn xác 100%. Trả về đúng định dạng JSON: { "translations": [ "câu 1 tiếng Việt", "câu 2 tiếng Việt", ... ] } cho các câu sau:
+${JSON.stringify(textsToTranslate, null, 2)}`;
+
+        let rescueResp: any;
+        const rescueModels = ['gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3-flash-preview'];
+        for (const rModel of rescueModels) {
+          try {
+            rescueResp = await ai.models.generateContent({
+              model: rModel,
+              contents: rescuePrompt,
+              config: {
+                responseMimeType: 'application/json',
+              },
+            });
+            if (rescueResp?.text) break;
+          } catch (_) {}
+        }
+
+        if (rescueResp?.text) {
+          const parsedRescue = JSON.parse(rescueResp.text.replace(/```json\s*|\s*```/gi, '').trim());
+          const arr = Array.isArray(parsedRescue) ? parsedRescue : parsedRescue.translations;
+          if (Array.isArray(arr) && arr.length === untranslatedItems.length) {
+            untranslatedItems.forEach((it: any, i: number) => {
+              if (arr[i] && typeof arr[i] === 'string') {
+                it.translated_text = arr[i].trim();
+              }
+            });
+          }
+        }
+      } catch (rescueErr) {
+        console.warn('Rescue Vietnamese translation error:', rescueErr);
+      }
+    }
+
+    // Also verify summary translation is in Vietnamese
+    if (summary && !VIETNAMESE_ACCENT_REGEX.test(summary) && ENGLISH_WORD_REGEX.test(summary)) {
+      try {
+        const sumModels = ['gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3-flash-preview'];
+        for (const sModel of sumModels) {
+          try {
+            const sumResp = await ai.models.generateContent({
+              model: sModel,
+              contents: `Dịch văn bản sau sang tiếng Việt hoàn chỉnh và tự nhiên:\n${summary}`,
+            });
+            if (sumResp?.text) {
+              summary = sumResp.text.trim();
+              break;
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
     // If no individual line items were detected but a genuine summary exists, create a readable fallback item
     const isNoTextSummary = /không\s+(?:có|tìm\s+thấy|phát\s+hiện)\s+văn\s+bản|chưa\s+phát\s+hiện|no\s+text/i.test(summary);
-    if (normalizedItems.length === 0 && summary.length > 0 && !isNoTextSummary) {
-      normalizedItems.push({
+    if (deduplicatedItems.length === 0 && summary.length > 0 && !isNoTextSummary) {
+      deduplicatedItems.push({
         box_2d: [350, 100, 480, 900],
         translated_text: summary,
         category: 'sign',
@@ -311,13 +464,20 @@ app.post('/api/translate-vision', async (req, res) => {
     }
 
     const finalResult = {
-      detected_language: parsed?.detected_language || 'Tự động',
+      detected_language: parsed?.detected_language || 'Tiếng Trung',
       summary_translation: summary,
-      items: normalizedItems,
+      items: deduplicatedItems,
     };
 
-    // Cache 10 giây: Giúp hiển thị tức thì (0ms) khi camera hướng vào cùng tài liệu hoặc biển hiệu
-    if (normalizedItems.length > 0) {
+    // Cache: Chỉ cache khi kết quả đã dịch đúng sang tiếng Việt
+    const stillHasEnglish = deduplicatedItems.some(
+      (it: any) =>
+        it.translated_text &&
+        !VIETNAMESE_ACCENT_REGEX.test(it.translated_text) &&
+        ENGLISH_WORD_REGEX.test(it.translated_text)
+    );
+
+    if (deduplicatedItems.length > 0 && !stillHasEnglish) {
       frameCache.set(cacheKey, { data: finalResult, expiresAt: now + 10000 });
       if (frameCache.size > 60) {
         for (const [k, v] of frameCache.entries()) {

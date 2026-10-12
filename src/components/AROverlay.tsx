@@ -31,36 +31,22 @@ interface PositionedItem {
   width: number; // percentage 0-100
   height: number; // percentage 0-100
   text: string;
+  isShortLabel: boolean;
+  isVerticalColumn: boolean;
 }
 
 function normalizeTextForComparison(text: string): string {
   return (text || '').toLowerCase().replace(/[\s,.;:!?_()\-–—"']/g, '');
 }
 
-// Check if two horizontal ranges [leftA, leftA+widthA] and [leftB, leftB+widthB] overlap significantly
-function hasHorizontalOverlap(
-  leftA: number,
-  widthA: number,
-  leftB: number,
-  widthB: number
-): boolean {
-  const rightA = leftA + widthA;
-  const rightB = leftB + widthB;
-  const overlapLeft = Math.max(leftA, leftB);
-  const overlapRight = Math.min(rightA, rightB);
-  const overlapWidth = overlapRight - overlapLeft;
-
-  if (overlapWidth <= 0) return false;
-
-  const minBoxWidth = Math.min(widthA, widthB);
-  return (overlapWidth / minBoxWidth) > 0.20 || overlapWidth > 3.5;
-}
-
-// 1:1 Precise Layout Engine with per-column vertical anti-collision
-function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] {
+// True Coordinate Engine with Strict Anti-Collision & Zero Overlap
+function processAndDeduplicateItems(
+  rawItems: DetectedItem[],
+  textSize: 'sm' | 'md' | 'lg' = 'sm'
+): PositionedItem[] {
   if (!rawItems || rawItems.length === 0) return [];
 
-  const validEntries: {
+  interface Entry {
     item: DetectedItem;
     ymin: number;
     xmin: number;
@@ -68,7 +54,10 @@ function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] 
     xmax: number;
     text: string;
     norm: string;
-  }[] = [];
+    area: number;
+  }
+
+  const validEntries: Entry[] = [];
 
   for (const rawItem of rawItems) {
     if (!rawItem.box_2d || rawItem.box_2d.length < 4 || !rawItem.translated_text) continue;
@@ -78,7 +67,10 @@ function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] 
     const norm = normalizeTextForComparison(cleanText);
     if (norm.length === 0) continue;
 
-    const [ymin, xmin, ymax, xmax] = rawItem.box_2d;
+    let [ymin, xmin, ymax, xmax] = rawItem.box_2d;
+    if (ymax <= ymin || xmax <= xmin) continue;
+
+    const area = (ymax - ymin) * (xmax - xmin);
     validEntries.push({
       item: { ...rawItem, translated_text: cleanText },
       ymin,
@@ -87,91 +79,218 @@ function processAndDeduplicateItems(rawItems: DetectedItem[]): PositionedItem[] 
       xmax,
       text: cleanText,
       norm,
+      area,
     });
   }
 
-  // Filter out duplicate text items occupying virtually the same spatial position
-  const filtered: typeof validEntries = [];
+  // Deduplicate redundant overlapping items:
+  // Sort descending by text length so longer, complete sentences take precedence over fragments
+  validEntries.sort((a, b) => b.text.length - a.text.length);
+
+  const filtered: Entry[] = [];
+
   for (const entry of validEntries) {
-    const isDuplicate = filtered.some((accepted) => {
+    const isRedundant = filtered.some((accepted) => {
+      // 1. Identical text or substring check
       if (accepted.norm === entry.norm) return true;
-      const cyA = (accepted.ymin + accepted.ymax) / 2;
-      const cyB = (entry.ymin + entry.ymax) / 2;
-      const cxA = (accepted.xmin + accepted.xmax) / 2;
-      const cxB = (entry.xmin + entry.xmax) / 2;
-      if (Math.abs(cyA - cyB) < 25 && Math.abs(cxA - cxB) < 40 && accepted.norm === entry.norm) {
-        return true;
+      if (accepted.norm.includes(entry.norm) && entry.norm.length > 12) return true;
+
+      // 2. High word overlap (Jaccard similarity) when vertically close
+      const wordsA = new Set(accepted.text.toLowerCase().split(/\s+/).filter((w) => w.length > 2));
+      const wordsB = new Set(entry.text.toLowerCase().split(/\s+/).filter((w) => w.length > 2));
+      if (wordsA.size > 0 && wordsB.size > 0) {
+        let common = 0;
+        for (const w of wordsA) {
+          if (wordsB.has(w)) common++;
+        }
+        const sim = common / Math.min(wordsA.size, wordsB.size);
+        if (sim >= 0.55 && Math.abs(accepted.ymin - entry.ymin) < 140) {
+          return true;
+        }
       }
+
+      // 3. Significant bounding box intersection
+      const intYmin = Math.max(accepted.ymin, entry.ymin);
+      const intXmin = Math.max(accepted.xmin, entry.xmin);
+      const intYmax = Math.min(accepted.ymax, entry.ymax);
+      const intXmax = Math.min(accepted.xmax, entry.xmax);
+
+      if (intYmax > intYmin && intXmax > intXmin) {
+        const intArea = (intYmax - intYmin) * (intXmax - intXmin);
+        const minArea = Math.min(accepted.area, entry.area);
+        const overlapRatio = intArea / minArea;
+
+        // One box is mostly inside another box (> 45%)
+        if (overlapRatio > 0.45) {
+          return true;
+        }
+      }
+
       return false;
     });
 
-    if (!isDuplicate) {
+    if (!isRedundant) {
       filtered.push(entry);
     }
   }
 
-  // Sort items strictly top-to-bottom by ymin
-  filtered.sort((a, b) => a.ymin - b.ymin);
+  // Sort back to natural reading order: top-to-bottom, left-to-right
+  filtered.sort((a, b) => {
+    if (Math.abs(a.ymin - b.ymin) < 25) {
+      return a.xmin - b.xmin;
+    }
+    return a.ymin - b.ymin;
+  });
 
-  // Position items with column-aware vertical collision avoidance
+  // Initial Placement
   const positioned: PositionedItem[] = [];
 
   for (const entry of filtered) {
-    const desiredLeft = Math.max(0.2, Math.min(94, entry.xmin / 10));
-    const rawW = Math.max(12.0, (entry.xmax - entry.xmin) / 10);
-    const width = Math.min(99.5 - desiredLeft, rawW);
+    let top = Math.max(0.5, Math.min(96.0, entry.ymin / 10));
+    let left = Math.max(0.5, Math.min(96.0, entry.xmin / 10));
+    const rawWidth = Math.max(2.5, (entry.xmax - entry.xmin) / 10);
+    const rawHeight = Math.max(2.0, (entry.ymax - entry.ymin) / 10);
 
-    // Dynamic height calculation based on text length to prevent text overflow
-    const approxLines = Math.max(1, Math.ceil(entry.text.length / Math.max(12, Math.floor(width * 0.9))));
-    const calculatedHeight = Math.max((entry.ymax - entry.ymin) / 10, approxLines * 2.4);
-    const height = Math.max(2.2, Math.min(35, calculatedHeight));
+    const isVerticalColumn = rawHeight >= rawWidth * 2.2 && rawWidth <= 14.0;
+    const isShortLabel = entry.text.length <= 16 && rawHeight <= 4.5 && !isVerticalColumn;
 
-    let top = Math.max(0.2, Math.min(96, entry.ymin / 10));
-
-    // Collision check: find maximum bottom edge among placed items that horizontally overlap
-    let maxOverlappingBottom = 0;
-    for (const placed of positioned) {
-      if (hasHorizontalOverlap(desiredLeft, width, placed.left, placed.width)) {
-        const pBottom = placed.top + placed.height;
-        if (pBottom > maxOverlappingBottom) {
-          maxOverlappingBottom = pBottom;
-        }
+    // Check if there are other items in the same horizontal band to the right
+    let maxAllowedRight = 97.5;
+    for (const other of filtered) {
+      if (other === entry) continue;
+      // Overlaps vertically in bounding box
+      const sharesVerticalBand =
+        Math.max(entry.ymin, other.ymin) < Math.min(entry.ymax, other.ymax);
+      if (sharesVerticalBand && other.xmin > entry.xmin + 25) {
+        maxAllowedRight = Math.min(maxAllowedRight, other.xmin / 10 - 1.2);
       }
     }
 
-    if (maxOverlappingBottom > 0 && top < maxOverlappingBottom + 0.4) {
-      top = Math.min(95, maxOverlappingBottom + 0.5);
+    let width = rawWidth;
+    if (isVerticalColumn) {
+      // Tall side pillar / couplet: keep in column with comfortable reading width
+      width = Math.min(maxAllowedRight - left, Math.max(rawWidth, 8.5));
+    } else if (isShortLabel) {
+      // Short buttons or icons: give adequate room to prevent unwanted line breaks
+      const labelW = Math.min(35, entry.text.length * 1.5 + 2.5);
+      width = Math.min(maxAllowedRight - left, Math.max(rawWidth, labelW));
+    } else {
+      // Check if this item is a full-width line or paragraph
+      const maxWidthInSpace = Math.max(rawWidth, maxAllowedRight - left);
+      if (entry.text.length > 25 || rawWidth >= 30) {
+        // Stretch across like the original line without invading right neighbors
+        width = Math.min(maxAllowedRight - left, Math.max(rawWidth, maxWidthInSpace));
+      } else {
+        width = Math.min(maxAllowedRight - left, Math.max(rawWidth, Math.min(45, entry.text.length * 1.5 + 3)));
+      }
     }
+
+    // Ensure within screen margins
+    if (left + width > 98.5) {
+      left = Math.max(0.5, 98.5 - width);
+    }
+
+    // Realistic DOM rendered height calculation:
+    // Takes into account font size scale, characters per line, and vertical padding
+    const charWidthFactor = textSize === 'sm' ? 0.65 : textSize === 'md' ? 0.72 : 0.80;
+    const charsPerLine = Math.max(10, Math.floor(width / charWidthFactor));
+    const numLines = Math.max(1, Math.ceil(entry.text.length / charsPerLine));
+    const perLineH = textSize === 'sm' ? 2.5 : textSize === 'md' ? 2.8 : 3.1;
+    const estimatedHeight = Math.max(rawHeight, 1.2 + numLines * perLineH);
 
     positioned.push({
       item: entry.item,
       top,
-      left: desiredLeft,
+      left,
       width,
-      height,
+      height: estimatedHeight,
       text: entry.text,
+      isShortLabel,
+      isVerticalColumn,
     });
+  }
+
+  // Multi-Pass Iterative Anti-Collision Relaxation Engine
+  // Runs physics-like relaxation passes so NO TWO ITEMS OVERLAP anywhere on screen
+  const VERTICAL_GAP = 0.8; // 0.8% clean separation gap between stacked boxes
+
+  for (let pass = 0; pass < 20; pass++) {
+    let hasConflict = false;
+
+    // Sort by current vertical position
+    positioned.sort((a, b) => a.top - b.top);
+
+    for (let i = 0; i < positioned.length; i++) {
+      for (let j = i + 1; j < positioned.length; j++) {
+        const A = positioned[i];
+        const B = positioned[j];
+
+        // Horizontal overlap test with safety tolerance
+        const overlapX =
+          Math.min(A.left + A.width, B.left + B.width) - Math.max(A.left, B.left);
+        // Vertical collision test: B starts before A ends
+        const overlapY = A.top + A.height + VERTICAL_GAP - B.top;
+
+        if (overlapX > 0.5 && overlapY > 0) {
+          // Collision detected! Nudge B down so it sits neatly below A
+          B.top = Math.min(97.5, A.top + A.height + VERTICAL_GAP);
+          hasConflict = true;
+        }
+      }
+    }
+
+    if (!hasConflict) {
+      break; // All collisions cleanly resolved!
+    }
+  }
+
+  // Bottom boundary safety check: if elements cascade past 98%, gently compress spacing
+  const maxBottom = Math.max(...positioned.map((p) => p.top + p.height), 0);
+  if (maxBottom > 98.5 && positioned.length > 1) {
+    const overflow = maxBottom - 98.5;
+    for (let i = 1; i < positioned.length; i++) {
+      const ratio = i / (positioned.length - 1);
+      positioned[i].top = Math.max(0.5, positioned[i].top - overflow * ratio);
+    }
   }
 
   return positioned;
 }
 
-// Dynamic compact font size matching text length & chosen textSize scale
-function getResponsiveFontSize(textLength: number, textSizeScale: 'sm' | 'md' | 'lg' = 'sm'): string {
+// Dynamic font size matching text length, column shape & chosen scale
+function getResponsiveFontSize(
+  textLength: number,
+  isShortLabel: boolean,
+  isVerticalColumn: boolean,
+  textSizeScale: 'sm' | 'md' | 'lg' = 'sm'
+): string {
+  if (isVerticalColumn) {
+    return '0.62rem';
+  }
+
+  if (isShortLabel) {
+    if (textSizeScale === 'sm') return '0.70rem'; // ~11.2px
+    if (textSizeScale === 'md') return '0.76rem'; // ~12.1px
+    return '0.84rem'; // ~13.4px
+  }
+
+  // Paragraphs & sentences
   if (textSizeScale === 'sm') {
-    if (textLength > 180) return '0.58rem'; // ~9.2px compact
-    if (textLength > 100) return '0.62rem'; // ~9.9px
-    if (textLength > 40) return '0.66rem'; // ~10.5px
-    return '0.70rem'; // ~11.2px
+    if (textLength > 140) return '0.62rem';
+    if (textLength > 80) return '0.66rem';
+    if (textLength > 35) return '0.70rem';
+    return '0.74rem';
   }
   if (textSizeScale === 'md') {
-    if (textLength > 180) return '0.65rem'; // ~10.4px
-    if (textLength > 100) return '0.70rem'; // ~11.2px
-    return '0.75rem'; // ~12px
+    if (textLength > 140) return '0.68rem';
+    if (textLength > 80) return '0.74rem';
+    if (textLength > 35) return '0.78rem';
+    return '0.82rem';
   }
   // 'lg' scale
-  if (textLength > 180) return '0.74rem'; // ~11.8px
-  return '0.82rem'; // ~13.1px
+  if (textLength > 140) return '0.74rem';
+  if (textLength > 80) return '0.80rem';
+  return '0.88rem';
 }
 
 export const AROverlay: React.FC<AROverlayProps> = ({
@@ -180,56 +299,71 @@ export const AROverlay: React.FC<AROverlayProps> = ({
   onSelectItem,
   overlayMode = 'replace',
   showOverlayText,
+  maskCoverMode = true,
   textSize = 'sm',
 }) => {
   if (!items || items.length === 0 || overlayMode === 'hidden') return null;
 
   const isTextVisible = showOverlayText !== undefined ? showOverlayText : overlayMode === 'replace';
-  const layoutItems = processAndDeduplicateItems(items);
+  const layoutItems = processAndDeduplicateItems(items, textSize);
 
   return (
-    <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden">
-      {layoutItems.map(({ item, top, left, width, height, text }, index) => {
-        const isSelected = selectedItem === item;
-        const fontSize = getResponsiveFontSize(text.length, textSize);
+    <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden select-none">
+      {layoutItems.map(
+        ({ item, top, left, width, height, text, isShortLabel, isVerticalColumn }, index) => {
+          const isSelected = selectedItem === item;
+          const fontSize = getResponsiveFontSize(
+            text.length,
+            isShortLabel,
+            isVerticalColumn,
+            textSize
+          );
 
-        return (
-          <div
-            key={`ar-${text.slice(0, 15)}-${index}`}
-            style={{
-              top: `${top}%`,
-              left: `${left}%`,
-              width: `${width}%`,
-              minHeight: `${height}%`,
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelectItem(item);
-            }}
-            className={`absolute pointer-events-auto cursor-pointer flex flex-col justify-start items-start ${
-              isSelected ? 'scale-[1.01] z-30' : 'z-20'
-            }`}
-            title={`Bấm để chọn bản dịch: ${text}`}
-          >
-            {isTextVisible ? (
-              <div
-                className={`w-full h-full transition-all overflow-y-auto rounded-md p-1 sm:p-1.5 text-left break-words shadow-sm ${
-                  isSelected
-                    ? 'bg-amber-400/90 text-slate-950 font-bold ring-2 ring-amber-300 z-30'
-                    : 'bg-slate-950/60 backdrop-blur-[2px] border border-emerald-400/35 text-emerald-100 font-medium hover:bg-slate-950/80 z-20'
-                }`}
-                style={{ fontSize, lineHeight: '1.28' }}
-              >
-                {text}
-              </div>
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shadow-lg" />
-              </div>
-            )}
-          </div>
-        );
-      })}
+          return (
+            <div
+              key={`ar-${text.slice(0, 15)}-${index}`}
+              style={{
+                top: `${top}%`,
+                left: `${left}%`,
+                width: `${width}%`,
+                minHeight: `${height}%`,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectItem(item);
+              }}
+              className={`absolute pointer-events-auto cursor-pointer flex flex-col justify-start items-start ${
+                isSelected ? 'scale-[1.01] z-30' : 'z-20'
+              }`}
+              title={`Bấm để xem chi tiết: ${text}`}
+            >
+              {isTextVisible ? (
+                <div
+                  className={`w-full transition-all text-left px-1.5 py-0.5 rounded shadow-md ${
+                    isShortLabel ? 'whitespace-nowrap overflow-visible' : 'break-words'
+                  } ${
+                    isSelected
+                      ? 'bg-amber-400 text-slate-950 font-bold rounded ring-2 ring-amber-300 shadow-xl z-30'
+                      : maskCoverMode
+                      ? 'bg-slate-950/90 text-white font-medium border border-slate-700/80 backdrop-blur-xs shadow-lg z-20'
+                      : 'bg-black/60 text-white font-bold [text-shadow:_0_1px_2px_#000,_0_0_3px_#000] border border-white/20 z-20'
+                  }`}
+                  style={{
+                    fontSize,
+                    lineHeight: isShortLabel ? '1.15' : '1.25',
+                  }}
+                >
+                  {text}
+                </div>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shadow-lg" />
+                </div>
+              )}
+            </div>
+          );
+        }
+      )}
     </div>
   );
 };
