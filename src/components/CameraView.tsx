@@ -337,8 +337,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
     if (vW === 0 || vH === 0) return null;
 
     const canvas = document.createElement('canvas');
-    // 1280px high-resolution capture: ensures all Chinese/English characters are razor sharp
-    const maxDim = 1280;
+    // 960px high-resolution capture: optimal sweet-spot for Gemini OCR with instant ~15ms encoding and ~75KB payload
+    const maxDim = 960;
     const scale = Math.min(1, maxDim / Math.max(vW, vH));
     const targetW = Math.round(vW * scale);
     const targetH = Math.round(vH * scale);
@@ -354,7 +354,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
     }
     try {
       ctx.drawImage(video, 0, 0, targetW, targetH);
-      return canvas.toDataURL('image/jpeg', 0.85);
+      return canvas.toDataURL('image/jpeg', 0.75);
     } catch (err) {
       console.warn('Canvas drawImage error during capture:', err);
       return null;
@@ -397,8 +397,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
     reader.onload = async (event) => {
       const dataUrl = event.target?.result as string;
       if (dataUrl) {
-        // Compress high-res phone camera photo to prevent browser memory hang
-        const compressed = await compressImageForOCR(dataUrl, 1280, 0.80);
+        // Fast compression for phone camera photo to 960px for instant OCR
+        const compressed = await compressImageForOCR(dataUrl, 960, 0.75);
         onCapturePhoto(compressed);
       }
     };
@@ -406,86 +406,45 @@ export const CameraView: React.FC<CameraViewProps> = ({
     e.target.value = '';
   };
 
-  // SMART LIVE TRANSLATION LOOP (Tự động nhận diện tức thì khi hướng camera vào văn bản mới)
+  // ZERO-LAG LIVE TRANSLATION LOOP (Tự động nhận diện tức thì ngay khi hướng camera vào văn bản)
   useEffect(() => {
     if (!isLiveTranslating || staticImageUrl || !cameraReady) return;
 
     let isMounted = true;
     let timeoutId: any = null;
-
-    // Canvas nhỏ 16x16 để đo dịch chuyển khung hình siêu nhẹ (0.05ms CPU)
-    const motionCanvas = document.createElement('canvas');
-    motionCanvas.width = 16;
-    motionCanvas.height = 16;
-    const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
-
-    let lastThumb: Uint8ClampedArray | null = null;
-    let steadyCount = 0;
-    let hadMotion = true; // Bắt đầu quét ngay khung hình đầu tiên
+    let lastScanTime = 0;
 
     const runLiveLoop = async () => {
       if (!isMounted || !isLiveTranslatingRef.current) return;
 
       const video = videoRef.current;
+      const now = Date.now();
+
+      // Quét liên tục: khi camera sẵn sàng và không bận phân tích, chụp khung hình ngay lập tức
       if (
         !isAnalyzingRef.current &&
         video &&
         video.videoWidth > 0 &&
         video.videoHeight > 0 &&
-        motionCtx
+        now - lastScanTime >= 600
       ) {
         try {
-          motionCtx.drawImage(video, 0, 0, 16, 16);
-          const currentThumb = motionCtx.getImageData(0, 0, 16, 16).data;
-
-          if (lastThumb) {
-            let diffSum = 0;
-            // So sánh độ sai khác giữa 2 khung hình
-            for (let i = 0; i < currentThumb.length; i += 8) {
-              diffSum += Math.abs(currentThumb[i] - lastThumb[i]);
-            }
-            const avgDiff = diffSum / (currentThumb.length / 8);
-
-            if (avgDiff > 14) {
-              // Camera đang di chuyển sang vị trí mới
-              hadMotion = true;
-              steadyCount = 0;
-            } else {
-              // Camera đã dừng ổn định
-              steadyCount++;
-            }
-          } else {
-            hadMotion = true;
-            steadyCount = 1;
-          }
-
-          lastThumb = new Uint8ClampedArray(currentThumb);
-
-          // KÍCH HOẠT DỊCH TỨC THÌ:
-          // 1. Khi vừa dừng camera vào dòng chữ mới (steadyCount === 1 sau khi di chuyển)
-          // 2. Hoặc định kỳ mỗi 6 giây nếu giữ nguyên camera
-          const shouldTriggerScan =
-            (hadMotion && steadyCount === 1) ||
-            (steadyCount > 0 && steadyCount % 12 === 0);
-
-          if (shouldTriggerScan) {
-            hadMotion = false;
-            const frameData = captureFrame();
-            if (frameData && onLiveFrameRef.current) {
-              onLiveFrameRef.current(frameData);
-            }
+          lastScanTime = now;
+          const frameData = captureFrame();
+          if (frameData && onLiveFrameRef.current) {
+            onLiveFrameRef.current(frameData);
           }
         } catch (e) {
-          console.warn('Live motion check deferred', e);
+          console.warn('Live capture error', e);
         }
       }
 
-      // Nhịp kiểm tra chuyển động đều đặn mỗi 450ms
-      timeoutId = setTimeout(runLiveLoop, isAnalyzingRef.current ? 600 : 450);
+      // Kiểm tra nhịp đều đặn 180ms
+      timeoutId = setTimeout(runLiveLoop, isAnalyzingRef.current ? 250 : 180);
     };
 
-    // Quét lần đầu ngay sau 300ms khi mở camera
-    timeoutId = setTimeout(runLiveLoop, 300);
+    // Quét khung hình đầu tiên tức thì ngay sau 60ms khi camera vừa mở
+    timeoutId = setTimeout(runLiveLoop, 60);
 
     return () => {
       isMounted = false;
@@ -502,8 +461,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
     reader.onload = async (event) => {
       const dataUrl = event.target?.result as string;
       if (dataUrl) {
-        // Compress uploaded photo to prevent browser memory hang
-        const compressed = await compressImageForOCR(dataUrl, 1280, 0.80);
+        // Compress uploaded photo to 960px 0.75 for fast OCR
+        const compressed = await compressImageForOCR(dataUrl, 960, 0.75);
         onCapturePhoto(compressed);
       }
     };

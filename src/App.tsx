@@ -56,6 +56,14 @@ import {
 } from './types';
 
 const STORAGE_KEY = 'travel_camera_translator_history_v2';
+// Fast 0ms client-side LRU cache for instant OCR frame rendering
+const clientScanCache = new Map<string, { result: VisionTranslationResult; timestamp: number }>();
+
+function getClientFrameSignature(base64: string): string {
+  const len = base64.length;
+  if (len < 300) return base64;
+  return `${len}_${base64.slice(120, 200)}_${base64.slice(-200, -120)}`;
+}
 
 export default function App() {
   const [staticImageUrl, setStaticImageUrl] = useState<string | null>(null);
@@ -68,7 +76,7 @@ export default function App() {
   const [showOverlayText, setShowOverlayText] = useState(true);
   const [maskCoverMode, setMaskCoverMode] = useState(true); // Mặc định bật hộp nền mờ tương phản cao để chữ không bị chìm/đè lên chữ gốc
   const [showFullArticle, setShowFullArticle] = useState(false);
-  const [activeTab, setActiveTab] = useState<'photo' | 'live' | 'list'>('photo');
+  const [activeTab, setActiveTab] = useState<'photo' | 'live' | 'list'>('live');
   const [viewMode, setViewMode] = useState<'ar' | 'list'>('ar');
   const [isPhotoSheetExpanded, setIsPhotoSheetExpanded] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
@@ -184,8 +192,8 @@ export default function App() {
       setSilentNotice('Đang nhận diện & dịch ảnh chụp...');
     } else {
       if (isAnalyzingRef.current) return;
-      // Nhịp quét nhanh: cho phép nhận diện tức thì khi camera ổn định
-      if (Date.now() - lastScanTimestamp.current < 400) return;
+      // Nhịp quét tức thì: nhận diện liên tục không trễ
+      if (Date.now() - lastScanTimestamp.current < 200) return;
     }
 
     lastScanTimestamp.current = Date.now();
@@ -194,8 +202,8 @@ export default function App() {
 
     const abortController = new AbortController();
     activeAbortRef.current = abortController;
-    // 25s timeout for manual snaps, 10s for continuous live video frames
-    const timeoutMs = isManualSnap ? 25000 : 10000;
+    // 20s timeout for manual snaps, 6s for continuous live video frames
+    const timeoutMs = isManualSnap ? 20000 : 6000;
     const abortTimeout = setTimeout(() => abortController.abort(), timeoutMs);
 
     try {
@@ -211,14 +219,24 @@ export default function App() {
         return;
       }
 
-      // Fast image payload: ensure SVGs and high-res manual photo snaps are properly rasterized to JPEG
+      // Fast image payload: bypass redundant canvas recompression if already optimized JPEG under 400KB
       const compressedImage = frameDataUrl.startsWith('data:image/svg')
-        ? await compressImageForOCR(frameDataUrl, 1080, 0.85)
-        : isManualSnap
-        ? await compressImageForOCR(frameDataUrl, 1080, 0.85)
-        : frameDataUrl.length < 250000
-        ? frameDataUrl
-        : await compressImageForOCR(frameDataUrl, 720, 0.65);
+        ? await compressImageForOCR(frameDataUrl, 960, 0.75)
+        : frameDataUrl.length > 400000
+        ? await compressImageForOCR(frameDataUrl, 960, 0.75)
+        : frameDataUrl;
+
+      // Instant 0ms Client Cache Hit on repeat frames or steady camera
+      const clientSig = getClientFrameSignature(compressedImage);
+      const clientCached = clientScanCache.get(clientSig);
+      if (clientCached && Date.now() - clientCached.timestamp < 45000 && clientCached.result?.items?.length > 0) {
+        setResult(clientCached.result);
+        setSilentNotice(null);
+        clearTimeout(abortTimeout);
+        isAnalyzingRef.current = false;
+        setIsAnalyzing(false);
+        return;
+      }
 
       const userKey = getUserApiKey();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -299,6 +317,11 @@ export default function App() {
       if (data) {
         if (data.items && data.items.length > 0) {
           consecutiveEmptyFrames.current = 0;
+          clientScanCache.set(clientSig, { result: data, timestamp: Date.now() });
+          if (clientScanCache.size > 50) {
+            const firstKey = clientScanCache.keys().next().value;
+            if (firstKey) clientScanCache.delete(firstKey);
+          }
           setResult(data);
           setSilentNotice(null);
         } else if (data.summary_translation && !/không\s+(?:có|tìm\s+thấy|phát\s+hiện)\s+văn\s+bản|chưa\s+phát\s+hiện|no\s+text/i.test(data.summary_translation)) {

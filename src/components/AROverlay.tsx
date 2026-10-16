@@ -305,7 +305,10 @@ export const AROverlay: React.FC<AROverlayProps> = ({
   if (!items || items.length === 0 || overlayMode === 'hidden') return null;
 
   const isTextVisible = showOverlayText !== undefined ? showOverlayText : overlayMode === 'replace';
-  const layoutItems = processAndDeduplicateItems(items, textSize);
+  const layoutItems = React.useMemo(
+    () => processAndDeduplicateItems(items, textSize),
+    [items, textSize]
+  );
 
   return (
     <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden select-none">
@@ -332,7 +335,7 @@ export const AROverlay: React.FC<AROverlayProps> = ({
                 e.stopPropagation();
                 onSelectItem(item);
               }}
-              className={`absolute pointer-events-auto cursor-pointer flex flex-col justify-start items-start ${
+              className={`absolute pointer-events-auto cursor-pointer flex flex-col justify-start items-start animate-in fade-in zoom-in-95 duration-150 ${
                 isSelected ? 'scale-[1.01] z-30' : 'z-20'
               }`}
               title={`Bấm để xem chi tiết: ${text}`}

@@ -145,26 +145,47 @@ Trả về định dạng JSON chuẩn:
   ]
 }`;
 
-    // Multi-model sequence: prioritize gemini-3.5-flash-lite for instant, high-quota multimodal vision translation
-    const candidateModels = [
-      'gemini-3.5-flash-lite',
-      'gemini-flash-latest',
-      'gemini-3-flash-preview',
+    // Primary Vision Model: gemini-3.8-flash for camera translation with thinkingBudget: 0 for instant response
+    const candidateConfigs = [
+      {
+        model: 'gemini-3.8-flash',
+        timeout: 5500,
+        thinkingBudget: 0,
+      },
+      {
+        model: 'gemini-2.5-flash',
+        timeout: 4500,
+        thinkingBudget: 0,
+      },
+      {
+        model: 'gemini-3.1-flash-lite',
+        timeout: 5000,
+        thinkingBudget: 0,
+      },
+      {
+        model: 'gemini-flash-latest',
+        timeout: 6000,
+        thinkingBudget: undefined,
+      },
     ];
 
     let lastError: any = null;
     let resultText: string | undefined = undefined;
 
-    for (const modelName of candidateModels) {
+    for (const item of candidateConfigs) {
       try {
         const config: any = {
           systemInstruction: 'BẠN LÀ CHUYÊN GIA DỊCH THUẬT TIẾNG VIỆT HÀNG ĐẦU. NHIỆM VỤ: Dịch 100% văn bản trong ảnh sang TIẾNG VIỆT chuẩn xác, sát nghĩa và tự nhiên nhất. Diễn đạt mượt mà, gãy gọn theo văn phong tiếng Việt hiện đại, tránh dịch thô cứng máy móc, tránh dùng từ Hán-Việt cổ ngô nghê. Tách biệt ngày tháng, giờ đăng ra khỏi tiêu đề, tuyệt đối không để ngày tháng chen ngang vào giữa câu.',
           responseMimeType: 'application/json',
-          maxOutputTokens: 4096,
+          maxOutputTokens: 2048,
         };
 
+        if (item.thinkingBudget !== undefined) {
+          config.thinkingConfig = { thinkingBudget: item.thinkingBudget };
+        }
+
         const generatePromise = ai.models.generateContent({
-          model: modelName,
+          model: item.model,
           contents: {
             parts: [
               {
@@ -179,9 +200,9 @@ Trả về định dạng JSON chuẩn:
           config,
         });
 
-        // 9s model timeout accommodates high-resolution photos and mobile connections
+        // Fast model timeout so failures rapidly failover without user lag
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Model timeout')), 9000)
+          setTimeout(() => reject(new Error('Model timeout')), item.timeout)
         );
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -385,38 +406,40 @@ Trả về định dạng JSON chuẩn:
       summary = summary.replace(chineseRegex, '').trim();
     }
 
-    // Safety Verification: If target is Vietnamese ('vi') and items contain untranslated English text
+    // Fast Verification: Only rescue if multiple sentences are genuinely untranslated foreign text
     const VIETNAMESE_ACCENT_REGEX = /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i;
-    const ENGLISH_WORD_REGEX = /\b(the|is|in|of|and|to|a|for|what|this|with|not|are|from|verb|entry|word|meaning|etymology|see|first|published|more|programme|revision|borrowing|earliest|known|use)\b/i;
+    const ENGLISH_SENTENCE_REGEX = /\b(the|this|that|with|from|which|where|when|have|has|will|about|they|their)\b/i;
 
     const untranslatedItems = deduplicatedItems.filter(
       (it: any) =>
         it.translated_text &&
-        it.translated_text.length > 3 &&
+        it.translated_text.length > 15 &&
         !VIETNAMESE_ACCENT_REGEX.test(it.translated_text) &&
-        ENGLISH_WORD_REGEX.test(it.translated_text)
+        ENGLISH_SENTENCE_REGEX.test(it.translated_text)
     );
 
-    if (untranslatedItems.length > 0) {
+    // Only rescue if genuine English sentences remain (>2 items or >= 30% of list)
+    if (untranslatedItems.length >= 2 && untranslatedItems.length >= deduplicatedItems.length * 0.3) {
       try {
         const textsToTranslate = untranslatedItems.map((it: any) => it.translated_text);
         const rescuePrompt = `Dịch danh sách các câu tiếng Anh/nước ngoài sau sang tiếng Việt chuẩn xác 100%. Trả về đúng định dạng JSON: { "translations": [ "câu 1 tiếng Việt", "câu 2 tiếng Việt", ... ] } cho các câu sau:
 ${JSON.stringify(textsToTranslate, null, 2)}`;
 
-        let rescueResp: any;
-        const rescueModels = ['gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3-flash-preview'];
-        for (const rModel of rescueModels) {
-          try {
-            rescueResp = await ai.models.generateContent({
-              model: rModel,
-              contents: rescuePrompt,
-              config: {
-                responseMimeType: 'application/json',
-              },
-            });
-            if (rescueResp?.text) break;
-          } catch (_) {}
-        }
+        const rescuePromise = ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: rescuePrompt,
+          config: {
+            responseMimeType: 'application/json',
+            maxOutputTokens: 1024,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        });
+
+        const rescueTimeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Rescue timeout')), 2500)
+        );
+
+        const rescueResp: any = await Promise.race([rescuePromise, rescueTimeout]);
 
         if (rescueResp?.text) {
           const parsedRescue = JSON.parse(rescueResp.text.replace(/```json\s*|\s*```/gi, '').trim());
@@ -430,27 +453,8 @@ ${JSON.stringify(textsToTranslate, null, 2)}`;
           }
         }
       } catch (rescueErr) {
-        console.warn('Rescue Vietnamese translation error:', rescueErr);
+        // Non-blocking: skip rescue without delaying response
       }
-    }
-
-    // Also verify summary translation is in Vietnamese
-    if (summary && !VIETNAMESE_ACCENT_REGEX.test(summary) && ENGLISH_WORD_REGEX.test(summary)) {
-      try {
-        const sumModels = ['gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3-flash-preview'];
-        for (const sModel of sumModels) {
-          try {
-            const sumResp = await ai.models.generateContent({
-              model: sModel,
-              contents: `Dịch văn bản sau sang tiếng Việt hoàn chỉnh và tự nhiên:\n${summary}`,
-            });
-            if (sumResp?.text) {
-              summary = sumResp.text.trim();
-              break;
-            }
-          } catch (_) {}
-        }
-      } catch (_) {}
     }
 
     // If no individual line items were detected but a genuine summary exists, create a readable fallback item
@@ -469,17 +473,10 @@ ${JSON.stringify(textsToTranslate, null, 2)}`;
       items: deduplicatedItems,
     };
 
-    // Cache: Chỉ cache khi kết quả đã dịch đúng sang tiếng Việt
-    const stillHasEnglish = deduplicatedItems.some(
-      (it: any) =>
-        it.translated_text &&
-        !VIETNAMESE_ACCENT_REGEX.test(it.translated_text) &&
-        ENGLISH_WORD_REGEX.test(it.translated_text)
-    );
-
-    if (deduplicatedItems.length > 0 && !stillHasEnglish) {
-      frameCache.set(cacheKey, { data: finalResult, expiresAt: now + 10000 });
-      if (frameCache.size > 60) {
+    // Cache valid results for 30s to make repetitive frames/static images respond in 0ms
+    if (deduplicatedItems.length > 0) {
+      frameCache.set(cacheKey, { data: finalResult, expiresAt: now + 30000 });
+      if (frameCache.size > 80) {
         for (const [k, v] of frameCache.entries()) {
           if (v.expiresAt <= now) frameCache.delete(k);
         }
