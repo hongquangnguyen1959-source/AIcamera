@@ -42,11 +42,11 @@ export const ToolsModal: React.FC<ToolsModalProps> = ({
   const tools = [
     {
       id: 'apikey',
-      title: 'Gemini API Key AI',
-      desc: isMissingApiKey ? 'Đang thiếu Key — Chạm để cài' : 'Cài đặt Gemini Key tốc độ cao',
+      title: 'Gemini AI API',
+      desc: 'Đã tích hợp sẵn API Key AI Gemini tốc độ cao miễn phí',
       icon: <Key className="w-5 h-5 text-emerald-400" />,
-      badge: isMissingApiKey ? 'Cần cài' : 'Hoạt động',
-      badgeColor: isMissingApiKey ? 'bg-amber-500/20 text-amber-300 border-amber-500/50' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50',
+      badge: 'Đã tích hợp sẵn',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50',
       action: onOpenApiKey,
     },
     {

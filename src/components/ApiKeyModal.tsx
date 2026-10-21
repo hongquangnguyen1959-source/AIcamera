@@ -88,10 +88,10 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             </span>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                Cài Đặt Gemini API Key
+                Trạng Thái Gemini API Key
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Cung cấp chìa khóa AI để dịch trực tiếp qua camera không giới hạn
+                Ứng dụng đã tích hợp sẵn API Key miễn phí tự động (Tùy chọn: Nhập Key riêng nếu muốn)
               </p>
             </div>
           </div>

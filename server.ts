@@ -149,22 +149,17 @@ Trả về định dạng JSON chuẩn:
     const candidateConfigs = [
       {
         model: 'gemini-3.8-flash',
-        timeout: 5500,
-        thinkingBudget: 0,
-      },
-      {
-        model: 'gemini-2.5-flash',
-        timeout: 4500,
-        thinkingBudget: 0,
-      },
-      {
-        model: 'gemini-3.1-flash-lite',
         timeout: 5000,
         thinkingBudget: 0,
       },
       {
+        model: 'gemini-3.1-flash-lite',
+        timeout: 4000,
+        thinkingBudget: 0,
+      },
+      {
         model: 'gemini-flash-latest',
-        timeout: 6000,
+        timeout: 5000,
         thinkingBudget: undefined,
       },
     ];
@@ -177,7 +172,7 @@ Trả về định dạng JSON chuẩn:
         const config: any = {
           systemInstruction: 'BẠN LÀ CHUYÊN GIA DỊCH THUẬT TIẾNG VIỆT HÀNG ĐẦU. NHIỆM VỤ: Dịch 100% văn bản trong ảnh sang TIẾNG VIỆT chuẩn xác, sát nghĩa và tự nhiên nhất. Diễn đạt mượt mà, gãy gọn theo văn phong tiếng Việt hiện đại, tránh dịch thô cứng máy móc, tránh dùng từ Hán-Việt cổ ngô nghê. Tách biệt ngày tháng, giờ đăng ra khỏi tiêu đề, tuyệt đối không để ngày tháng chen ngang vào giữa câu.',
           responseMimeType: 'application/json',
-          maxOutputTokens: 2048,
+          maxOutputTokens: 1500,
         };
 
         if (item.thinkingBudget !== undefined) {
@@ -535,7 +530,7 @@ Hãy trả lời ngắn gọn, thực tế, dễ hiểu bằng tiếng Việt (k
     });
 
     let answerText = '';
-    const chatModels = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'];
+    const chatModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
     for (const m of chatModels) {
       try {
         const response = await ai.models.generateContent({

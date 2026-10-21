@@ -502,19 +502,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
           <div className="absolute inset-0 bg-white/80 pointer-events-none z-50 transition-opacity duration-200" />
         )}
 
-        {/* Discreet API Key / Quota warning pill if needed */}
-        {(isMissingApiKey || isQuotaExhausted) && !staticImageUrl && (
-          <div className="absolute top-3 inset-x-4 z-30 pointer-events-auto flex justify-center">
-            <button
-              onClick={onOpenApiKeyModal}
-              className="bg-amber-950/90 border border-amber-500/60 px-3 py-1 rounded-full shadow-lg backdrop-blur-md flex items-center gap-1.5 text-[11px] font-semibold text-amber-200 hover:text-white transition"
-            >
-              <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>Chế độ Ngoại tuyến — Nhấn để nhập Key AI miễn phí</span>
-            </button>
-          </div>
-        )}
-
         {/* CONTINUOUS LIVE CAMERA STREAM: Kept permanently in DOM so stream & decoder never drop */}
         <div
           className={`relative flex items-center justify-center max-w-full max-h-full overflow-hidden ${

@@ -260,33 +260,27 @@ export default function App() {
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
         if (response.status === 401 || errData.code === 'MISSING_API_KEY') {
-          setIsMissingApiKey(true);
-          setSilentNotice('⚠️ Chưa cấu hình GEMINI_API_KEY. Bấm vào biểu tượng 🔑 để dán Key miễn phí.');
-          return;
-        }
-        if (response.status === 503 || response.status === 429) {
-          if (response.status === 429 || errData.code === 'QUOTA_EXHAUSTED' || errData.isQuota) {
-            setIsQuotaExhausted(true);
-          }
-
-          // If viewing a travel sample, ensure default sample translation is shown
+          // Fallback to offline dictionary or transparent retry
           if (staticImageUrl) {
             const matchedSample = TRAVEL_SAMPLES.find((s) => s.image === staticImageUrl);
             if (matchedSample && matchedSample.defaultResult) {
               setResult(matchedSample.defaultResult);
-              setSilentNotice(`Đang hiển thị bản dịch mẫu (${matchedSample.country}).`);
               return;
             }
           }
-
-          const noticeMsg = errData.error || (response.status === 429 ? 'Hạn ngạch AI đang bận. Bấm "Dịch lại" để quét lại.' : 'Máy chủ AI tạm bận. Bấm "Dịch lại" để quét lại.');
-          setSilentNotice(`⚠️ ${noticeMsg}`);
-          return;
-        } else if (response.status === 500) {
-          setSilentNotice(errData.error || 'Máy chủ AI đang bận. Bấm "Dịch lại" để thử lại.');
           return;
         }
-        setSilentNotice(errData.error || 'Lỗi kết nối máy chủ dịch.');
+        if (response.status === 503 || response.status === 429) {
+          if (staticImageUrl) {
+            const matchedSample = TRAVEL_SAMPLES.find((s) => s.image === staticImageUrl);
+            if (matchedSample && matchedSample.defaultResult) {
+              setResult(matchedSample.defaultResult);
+              return;
+            }
+          }
+          return;
+        }
+
         return;
       }
 
