@@ -34,10 +34,26 @@ export default defineConfig(() => {
                     console.error = function() {
                       if (arguments.length > 0) {
                         var msg = String((arguments[0] && (arguments[0].message || arguments[0].stack || arguments[0])) || '');
-                        if (msg.indexOf('WebSocket') !== -1) return;
+                        if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('reading \'send\'') !== -1) return;
                       }
                       return origErr.apply(console, arguments);
                     };
+                    window.addEventListener('error', function(event) {
+                      var msg = String(event && (event.message || (event.error && event.error.message)) || '');
+                      if (msg.indexOf('reading \'send\'') !== -1 || msg.indexOf('WebSocket') !== -1) {
+                        event.preventDefault();
+                        event.stopImmediatePropagation();
+                        return true;
+                      }
+                    }, true);
+                    window.addEventListener('unhandledrejection', function(event) {
+                      var reason = String(event && (event.reason && (event.reason.message || event.reason.stack || event.reason)) || '');
+                      if (reason.indexOf('reading \'send\'') !== -1 || reason.indexOf('WebSocket') !== -1) {
+                        event.preventDefault();
+                        event.stopImmediatePropagation();
+                        return true;
+                      }
+                    }, true);
                   })();
                 `,
               },
@@ -84,8 +100,7 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

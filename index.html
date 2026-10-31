@@ -23,7 +23,7 @@
         console.error = function(...args) {
           if (args.length > 0) {
             const msg = String(args[0]?.message || args[0]?.stack || args[0] || '');
-            if (msg.includes('WebSocket')) {
+            if (msg.includes('WebSocket') || msg.includes("reading 'send'")) {
               return;
             }
           }
@@ -34,7 +34,7 @@
         console.warn = function(...args) {
           if (args.length > 0) {
             const msg = String(args[0]?.message || args[0]?.stack || args[0] || '');
-            if (msg.includes('WebSocket')) {
+            if (msg.includes('WebSocket') || msg.includes("reading 'send'")) {
               return;
             }
           }
@@ -43,7 +43,7 @@
 
         window.addEventListener('unhandledrejection', function(event) {
           const reason = String(event.reason?.message || event.reason || '');
-          if (reason.includes('WebSocket')) {
+          if (reason.includes('WebSocket') || reason.includes("reading 'send'")) {
             event.stopImmediatePropagation();
             event.preventDefault();
           }
@@ -51,9 +51,10 @@
 
         window.addEventListener('error', function(event) {
           const msg = String(event.message || event.error?.message || '');
-          if (msg.includes('WebSocket')) {
+          if (msg.includes('WebSocket') || msg.includes("reading 'send'")) {
             event.stopImmediatePropagation();
             event.preventDefault();
+            return true;
           }
         }, true);
       })();

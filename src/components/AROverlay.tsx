@@ -348,8 +348,8 @@ export const AROverlay: React.FC<AROverlayProps> = ({
                     isSelected
                       ? 'bg-amber-400 text-slate-950 font-bold rounded ring-2 ring-amber-300 shadow-xl z-30'
                       : maskCoverMode
-                      ? 'bg-slate-950/90 text-white font-medium border border-slate-700/80 backdrop-blur-xs shadow-lg z-20'
-                      : 'bg-black/60 text-white font-bold [text-shadow:_0_1px_2px_#000,_0_0_3px_#000] border border-white/20 z-20'
+                      ? 'bg-slate-950/95 text-white font-semibold border border-emerald-500/60 backdrop-blur-sm shadow-xl z-20'
+                      : 'bg-black/75 text-emerald-200 font-bold [text-shadow:_0_1px_2px_#000,_0_0_3px_#000] border border-emerald-400/50 z-20'
                   }`}
                   style={{
                     fontSize,
