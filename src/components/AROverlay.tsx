@@ -20,6 +20,7 @@ function cleanVerboseText(text: string): string {
   const cleaned = text
     .replace(CHINESE_REGEX, '')
     .replace(/\s*\([^)]*(?:nghĩa|dịch|giải thích|phiên âm)[^)]*\)/gi, '')
+    .replace(/\(\s*\)|（\s*）/g, '')
     .trim();
   return cleaned || text.trim();
 }

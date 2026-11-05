@@ -187,7 +187,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
         canvasRef.current = document.createElement('canvas');
       }
       const canvas = canvasRef.current;
-      const maxDim = 800;
+      const maxDim = 960;
       const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
       const targetW = Math.round(video.videoWidth * scale);
       const targetH = Math.round(video.videoHeight * scale);
@@ -201,9 +201,10 @@ export const CameraView: React.FC<CameraViewProps> = ({
       if (!ctx) return null;
 
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'medium';
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(video, 0, 0, targetW, targetH);
-      return canvas.toDataURL('image/jpeg', 0.70);
+      // 0.78 JPEG produces sharp stroke contrast for complex Chinese characters
+      return canvas.toDataURL('image/jpeg', 0.78);
     } catch (err) {
       console.warn('captureLiveFrame canvas error:', err);
       return null;
@@ -227,7 +228,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
         !isLivePausedRef.current &&
         !activeSampleRef.current &&
         !isAnalyzingRef.current &&
-        now - lastScanTime >= 3500
+        now - lastScanTime >= 2500
       ) {
         const frame = captureLiveFrame();
         if (frame && onLiveFrameRef.current) {
