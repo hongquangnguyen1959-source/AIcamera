@@ -32,12 +32,3 @@ export interface ScanHistoryRecord {
   favorite?: boolean;
 }
 
-export interface TravelSample {
-  id: string;
-  title: string;
-  country: string;
-  flag: string;
-  description: string;
-  image: string; // SVG Data URI or image url
-  defaultResult?: VisionTranslationResult;
-}

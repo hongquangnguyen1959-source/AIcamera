@@ -3,6 +3,7 @@ import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
@@ -179,14 +180,11 @@ app.post('/api/translate-vision', async (req, res) => {
 
     // Ultra-fast AR OCR prompt: Yêu cầu bắt buộc dịch 100% sang tiếng Việt chuẩn xác, sát nghĩa và tự nhiên
     const prompt = `YÊU CẦU BẮT BUỘC: DỊCH 100% TOÀN BỘ VĂN BẢN TRONG ẢNH SANG TIẾNG VIỆT (VIETNAMESE).
-MỌI câu, từ, đoạn văn, tiêu đề, biển hiệu chữ Trung Quốc (cả Giản thể và Phồn thể), tiếng Anh hay bất kỳ ngôn ngữ nào trong ảnh PHẢI ĐƯỢC DỊCH SANG TIẾNG VIỆT HOÀN TOÀN trong trường "translated_text".
-TUYỆT ĐỐI KHÔNG ĐƯỢC GIỮ NGUYÊN CHỮ HÁN/TIẾNG TRUNG HOẶC BẤT KỲ NGÔN NGỮ NƯỚC NGOÀI NÀO TRONG "translated_text"!
+MỌI câu, đoạn văn, tiêu đề trong ảnh PHẢI ĐƯỢC DỊCH SANG TIẾNG VIỆT HOÀN TOÀN trong trường "translated_text".
+TUYỆT ĐỐI KHÔNG ĐƯỢC GIỮ NGUYÊN TIẾNG TRUNG, TIẾNG ANH HOẶC BẤT KỲ NGÔN NGỮ NƯỚC NGOÀI NÀO!
 
-TIÊU CHUẨN DỊCH CHỮ TRUNG QUỐC & QUỐC TẾ:
-1. ĐẶC BIỆT VỚI BIỂN HIỆU, MENU, NHÃN MÁC, TỜ RƠI TIẾNG TRUNG:
-   - Dịch trôi chảy, tự nhiên theo tiếng Việt hiện đại.
-   - Các món ăn, đồ uống, tên cửa hàng, cảnh báo, hướng dẫn chữ Hán phải được dịch nghĩa tiếng Việt dễ hiểu nhất.
-2. DỊCH CHUẨN VĂN PHONG BÁO CHÍ & ĐỜI SỐNG:
+TIÊU CHUẨN DỊCH SÁT NGHĨA & TỰ NHIÊN:
+1. DỊCH CHUẨN VĂN PHONG BÁO CHÍ & ĐỜI SỐNG:
    - Dịch trôi chảy, tự nhiên, diễn đạt gãy gọn theo văn phong tiếng Việt hiện đại (như bản tin báo Tuổi Trẻ, VnExpress, BBC Tiếng Việt).
    - Tuyệt đối KHÔNG dịch máy móc từng từ (word-by-word) hoặc dùng từ Hán-Việt cổ ngô nghê.
    - Ví dụ:
@@ -194,16 +192,16 @@ TIÊU CHUẨN DỊCH CHỮ TRUNG QUỐC & QUỐC TẾ:
      + "规避石油出口制裁" -> dịch là "lách lệnh trừng phạt xuất khẩu dầu".
      + "恶性循环" -> dịch là "vòng xoáy luẩn quẩn".
      + "防空武器" -> dịch là "vũ khí phòng không" (không nhầm thành "không đối không").
-3. TÁCH BIỆT TIÊU ĐỀ VÀ THỜI GIAN/NGÀY THÁNG:
+2. TÁCH BIỆT TIÊU ĐỀ VÀ THỜI GIAN/NGÀY THÁNG:
    - Ngày tháng, mốc thời gian (ví dụ: "2026年10月12日", "4小时前", "5 giờ trước") nếu nằm dưới hoặc bên cạnh tiêu đề thì PHẢI TÁCH RIÊNG thành khối thời gian hoặc để ở cuối câu.
-   - TUYỆT ĐỐI KHÔNG ghép ngày tháng xen vào giữa câu hay giữa tiêu đề làm méo mó câu chữ.
-4. BỐ CỤC KHUNG CHỮ CHÍNH XÁC & KHÔNG ĐÈ LÊN NHAU (box_2d [ymin, xmin, ymax, xmax] thang 0-1000):
+   - TUYỆT ĐỐI KHÔNG ghép ngày tháng xen vào giữa câu hay giữa tiêu đề làm méo mó câu chữ (ví dụ lỗi: "lách lệnh 2026 năm 1012 khẩu dầu" là lỗi nghiêm trọng do chèn ngày tháng vào giữa, câu đúng phải là "lách lệnh trừng phạt xuất khẩu dầu").
+3. BỐ CỤC KHUNG CHỮ CHÍNH XÁC & KHÔNG ĐÈ LÊN NHAU (box_2d [ymin, xmin, ymax, xmax] thang 0-1000):
    - Khung chữ box_2d phải khớp chính xác 1:1 với vị trí tương ứng của khối chữ đó trên hình ảnh.
    - TUYỆT ĐỐI KHÔNG ĐỂ CHỮ NẰM ĐÈ LÊN NHAU: Mỗi dòng chữ, tiêu đề, hoặc đoạn văn chỉ thuộc về 1 item duy nhất. Các box_2d theo chiều dọc (ymin -> ymax) và chiều ngang (xmin -> xmax) phải tách biệt rõ ràng, không trùng lấn, không chồng chéo lên nhau.
    - Gom nguyên vẹn từng tiêu đề hoặc đoạn văn hoàn chỉnh vào 1 box_2d duy nhất.
-   - ĐỘ RỘNG KHUNG CHỮ (xmax): Đối với các đoạn văn bài viết, tiêu đề trải dài ngang trang: Tọa độ xmax PHẢI BAO TRỌN toàn bộ chiều ngang của dòng chữ (từ lề trái xmin đến lề phải xmax ~920-960).
+   - ĐỘ RỘNG KHUNG CHỮ (xmax): Đối với các đoạn văn bài viết, tiêu đề trải dài ngang trang (như trang báo, tài liệu): Tọa độ xmax PHẢI BAO TRỌN toàn bộ chiều ngang của dòng chữ (từ lề trái xmin đến lề phải xmax ~920-960). Tuyệt đối không thu hẹp xmax khiến văn bản bị co cụm về một góc trái mà phải trải đều theo dòng chữ gốc. Đối với bảng, cột chữ hoặc biển hiệu có nhiều cột thì giữ đúng tọa độ từng cột.
 
-Trực tiếp xuất định dạng JSON:
+Trả về định dạng JSON chuẩn:
 {
   "detected_language": "Tiếng Trung",
   "summary_translation": "Bản dịch tiếng Việt trọn vẹn toàn bộ bài/nội dung từ trên xuống dưới",
@@ -216,30 +214,25 @@ Trực tiếp xuất định dạng JSON:
   ]
 }`;
 
-    // Cooldown check: If project reached quota, return 429 cooldown status
-    if (now < sharedKeyCooldownUntil) {
-      const waitSec = Math.max(1, Math.ceil((sharedKeyCooldownUntil - now) / 1000));
+    // Cooldown check: If using shared default key and reached quota, return 429 cooldown status
+    const customHeaderKey = (req.headers['x-gemini-api-key'] as string) || '';
+    if (!customHeaderKey && now < sharedKeyCooldownUntil) {
       return res.status(429).json({
-        error: `Hạn mức AI tạm thời bận, vui lòng thử lại sau ${waitSec} giây...`,
+        error: 'Hạn mức AI tạm thời bận, hệ thống sẽ tự động thử lại sau vài giây (hoặc bạn có thể nhập API Key cá nhân)...',
         code: 'QUOTA_COOLDOWN',
       });
     }
 
-    // Vision Model configs: gemini-2.5-flash with thinkingBudget: 0 for instant ~1s response, plus stable fallbacks
+    // Vision Model configs: gemini-2.5-flash has fast latency and gemini-flash-latest for fallback
     const candidateConfigs = [
       {
         model: 'gemini-2.5-flash',
-        timeout: 6000,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-      {
-        model: 'gemini-2.0-flash',
-        timeout: 5500,
+        timeout: 20000,
         thinkingConfig: undefined,
       },
       {
-        model: 'gemini-1.5-flash',
-        timeout: 5500,
+        model: 'gemini-flash-latest',
+        timeout: 20000,
         thinkingConfig: undefined,
       },
     ];
@@ -288,7 +281,9 @@ Trực tiếp xuất định dạng JSON:
       } catch (err: any) {
         lastError = err;
         if (err.message && (err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED'))) {
-          sharedKeyCooldownUntil = Date.now() + 15000;
+          if (!customHeaderKey) {
+            sharedKeyCooldownUntil = Date.now() + 15000;
+          }
           break; // Stop immediately on quota exhaustion to avoid cascading errors
         }
       }
@@ -381,10 +376,7 @@ Trực tiếp xuất định dạng JSON:
           '';
 
         if (typeof text !== 'string') text = String(text);
-        const originalClean = text.trim();
-        // Remove CJK characters if translation has Vietnamese; if empty, retain original so item is never dropped
-        const stripped = originalClean.replace(chineseRegex, '').replace(/\(\s*\)|（\s*）/g, '').trim();
-        text = stripped || originalClean;
+        text = text.replace(chineseRegex, '').trim();
 
         // Flexible bounding box extraction
         let box = item.box_2d || item.box || item.bbox || item.bounding_box || item.boundingBox;
@@ -474,9 +466,7 @@ Trực tiếp xuất định dạng JSON:
 
     let summary = parsed?.summary_translation || parsed?.summary || '';
     if (typeof summary === 'string') {
-      const origSummary = summary.trim();
-      const strippedSummary = origSummary.replace(chineseRegex, '').replace(/\(\s*\)|（\s*）/g, '').trim();
-      summary = strippedSummary || origSummary;
+      summary = summary.replace(chineseRegex, '').trim();
     }
 
     // Fast Verification: Only rescue if multiple sentences are genuinely untranslated foreign text
@@ -504,7 +494,6 @@ ${JSON.stringify(textsToTranslate, null, 2)}`;
           config: {
             responseMimeType: 'application/json',
             maxOutputTokens: 1024,
-            thinkingConfig: { thinkingBudget: 0 },
           },
         });
 
@@ -650,7 +639,7 @@ app.post('/api/tts', async (req, res) => {
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-3.8-flash-lite-tts',
       contents: [
         {
           role: 'user',
@@ -686,12 +675,11 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const http = await import('http');
     const httpServer = http.createServer(app);
-    const { createServer: createViteServer } = await import('vite');
-    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+    const isHmrDisabled = true; // HMR disabled in cloud container per environment constraints
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: isHmrDisabled ? false : { server: httpServer },
+        hmr: false,
       },
       appType: 'spa',
     });

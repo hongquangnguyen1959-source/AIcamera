@@ -11,6 +11,37 @@
       (function() {
         if (typeof window === 'undefined') return;
         try {
+          if (window.WebSocket) {
+            var OrigWS = window.WebSocket;
+            window.WebSocket = function(url, protocols) {
+              try {
+                var ws = new OrigWS(url, protocols);
+                ws.addEventListener('error', function(err) {
+                  try {
+                    err.preventDefault();
+                    err.stopImmediatePropagation();
+                  } catch (_) {}
+                });
+                return ws;
+              } catch (e) {
+                return {
+                  send: function() {},
+                  close: function() {},
+                  addEventListener: function() {},
+                  removeEventListener: function() {},
+                  readyState: 3,
+                };
+              }
+            };
+            window.WebSocket.prototype = OrigWS.prototype;
+            window.WebSocket.CONNECTING = OrigWS.CONNECTING;
+            window.WebSocket.OPEN = OrigWS.OPEN;
+            window.WebSocket.CLOSING = OrigWS.CLOSING;
+            window.WebSocket.CLOSED = OrigWS.CLOSED;
+          }
+        } catch (_) {}
+
+        try {
           if (window.CloseEvent) {
             Object.defineProperty(window.CloseEvent.prototype, 'wasClean', {
               get: function() { return true; },
